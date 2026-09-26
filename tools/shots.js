@@ -1,10 +1,31 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { chromium } = require('/Users/priticolours/.hermes/cache/scratch/node_modules/playwright');
 const EXE = process.env.HOME + '/Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
-const SITE = 'file:///Users/priticolours/Desktop/cmprssr-site/index.html';
-const OUT = '/Users/priticolours/Desktop/cmprssr-site/.shots';
+const ROOT = '/Users/priticolours/Desktop/cmprssr-site';
+const OUT = ROOT + '/.shots';
+
+/* gl.js fetches the fp mesh, and fetch() is blocked on the file: origin,
+   so the page has to be served over http to get its 3D. */
+const TYPES = { '.html':'text/html','.js':'text/javascript','.json':'application/json',
+                '.bin':'application/octet-stream','.png':'image/png','.css':'text/css','.svg':'image/svg+xml' };
 
 (async () => {
-  const b = await chromium.launch({ executablePath: EXE });
+  const srv = http.createServer((req, res) => {
+    const u = decodeURIComponent(req.url.split('?')[0]);
+    const f = path.join(ROOT, u === '/' ? '/index.html' : u);
+    if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) {
+      res.writeHead(404); return res.end('no');
+    }
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' });
+    fs.createReadStream(f).pipe(res);
+  });
+  await new Promise(r => srv.listen(8933, r));
+  const SITE = 'http://localhost:8933/index.html';
+
+  const b = await chromium.launch({ executablePath: EXE,
+    args: ['--use-gl=angle','--enable-unsafe-swiftshader','--ignore-gpu-blocklist'] });
   const errs = [];
 
   for (const [name, w, h] of [['desktop', 1440, 900], ['tablet', 1024, 800], ['mobile', 390, 844]]) {
@@ -41,5 +62,5 @@ const OUT = '/Users/priticolours/Desktop/cmprssr-site/.shots';
   await rp.close();
 
   console.log(errs.length ? 'ERRORS:\n' + errs.join('\n') : 'no console errors');
-  await b.close();
+  await b.close(); srv.close();
 })();

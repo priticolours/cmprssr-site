@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body { margin:0; background:#0b131a; color:#cfe4ee; font:13px ui-monospace,monospace; }
+#wrap { display:grid; grid-template-columns:repeat(4,1fr); }
+figure { margin:0; padding:6px; }
+figcaption { text-align:center; padding:3px 0; }
+/* draw() sizes the drawing buffer from clientWidth/clientHeight, so a
+   CSS size is required or the draw is a silent no-op at 0x0. */
+canvas { display:block; width:320px; height:320px; background:#101922; }
+</style></head><body>
+<div id="wrap"></div>
+<script src="/gl.js"></script>
+<script>
+/* Sweep pitch through the site's own renderer. Blender's rotation_euler
+   and gl.js's rotX disagree about axis order, so the page itself is the
+   only trustworthy reference for which pose shows the front. */
+const POSES = [];
+for (let p = -180; p < 180; p += 45) POSES.push(p * Math.PI / 180);
+
+const wrap = document.getElementById('wrap');
+const scenes = [];
+window.__ok = false;
+window.__err = null;
+
+(async () => {
+  for (const pitch of POSES) {
+    const fig = document.createElement('figure');
+    const c = document.createElement('canvas');
+    const cap = document.createElement('figcaption');
+    cap.textContent = 'pitch ' + (pitch * 180 / Math.PI).toFixed(0) + '\u00b0';
+    fig.appendChild(c); fig.appendChild(cap); wrap.appendChild(fig);
+    try {
+      /* preserveDrawingBuffer: without it the buffer is empty once the
+         compositor has taken the frame, which is when a screenshot runs. */
+      const s = await window.CMPRSSR3D.create(c, { count: 15000, preserve: true });
+      s.override = { pitch: pitch, yaw: 0 };
+      scenes.push(s);
+    } catch (e) { window.__err = String(e && e.message || e); }
+  }
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  for (const s of scenes) s.draw(2.4);
+  await new Promise(r => requestAnimationFrame(() => r()));
+  window.__ok = scenes.length === POSES.length;
+})();
+</script>
+</body></html>

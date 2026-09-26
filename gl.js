@@ -4,13 +4,17 @@
    Raw WebGL2, no libraries. One animation, 7 seconds, seamless loop:
 
      0.0 – 1.0   LOGO        two rectangles hold
-     1.0 – 2.0   BUILD       camera parts fly in, converge from exploded
-     2.0 – 2.8   ASSEMBLED   the camera turns
-     2.8 – 4.0   EXPLODE     parts separate along the optical axis
-     4.0 – 4.4   DISSOLVE    camera becomes a point cloud
-     4.4 – 5.2   CLOUD       the cloud breathes
+     1.0 – 2.0   BUILD       the fp converges from its exploded state
+     2.0 – 2.8   ASSEMBLED   the fp turns
+     2.8 – 4.0   EXPLODE     the real body separates along its optical axis
+     4.0 – 4.4   DISSOLVE    the fp becomes a point cloud
+     4.4 – 5.2   CLOUD       the cloud holds
      5.2 – 6.4   CONDENSE    the cloud contracts into the logo
      6.4 – 7.0   LOGO        hold — matches t=0, so the loop is seamless
+
+   The camera is the real Sigma fp, from the scan in
+   DUMP/fp model, sliced into five stages along its own optical axis
+   (see tools/stl-to-blob.py). It is not a stand-in.
 
    Why no library: the whole thing is one vertex shader that lerps a
    point between three positions — on the mesh, scattered in the cloud,
@@ -31,6 +35,7 @@
     lens:  [0.81, 0.89, 0.93],
     steel: [0.50, 0.61, 0.68],
     body:  [0.30, 0.40, 0.48],
+    bodyLo:[0.20, 0.28, 0.35],
     signal:[0.94, 0.40, 0.18]
   };
 
@@ -245,6 +250,147 @@
     };
   }
 
+  /* ── the fp sliced into exploded stages ──────────────────────
+     Each stage is a subset of the scan's own triangles, so the teardown
+     keeps the real silhouette of the real body. Stage 2 (the mount /
+     front) carries the accent, because that is where the lens — and so
+     the thing being compressed behind — lives. */
+  /* The fp is a black magnesium body, so it is painted in greys and the
+     accent is reserved for the single stage that matters: the mount,
+     where the compressed sensor sits behind the glass. Painting every
+     stage in the accent turned the whole camera orange. */
+  var FP_STAGE_COL = [
+    C.steel,   /* 0 front cap */
+    C.signal,  /* 1 lens mount — the one accent, and the smallest stage */
+    C.body,    /* 2 mid body */
+    C.body,    /* 3 rear plate */
+    C.bodyLo   /* 4 back cap */
+  ];
+  /* Travel is along the optical axis (+z is the front). The front
+     stages push toward the viewer and the rear stages pull away, so
+     the body opens up along the axis a lens actually sits on. Values
+     are in normalised units (body is 1.0 long) and scaled by
+     uExplode, so 0.6 is most of half the body length. */
+  /* Base orientation of the fp. The scan is Z-up, so its height axis
+     needs a quarter turn about x to stand the body on its feet and face
+     the lens mount at the orbit camera on +z. Found by rendering the
+     mesh at a grid of rotations and looking for the frame with the
+     mount (tools/fp-poses.py).
+     The timeline's own spin and tilt are added on top of this. */
+  var BASE_YAW = 0.0;
+  var BASE_PITCH = -Math.PI / 2;
+
+  var FP_STAGE_TRAVEL = [0.78, 0.50, 0.20, -0.34, -0.66];
+  var FP_STAGE_DIR = [1, 1, 1, -1, -1];
+
+  function fpParts(fp, st) {
+    var parts = [];
+    for (var s = 0; s < 5; s++) {
+      parts.push({
+        id: "stage" + s,
+        mesh: null,                 /* filled below from the slice */
+        x: 0,                       /* explode offset along the axis */
+        dir: FP_STAGE_DIR[s],
+        dist: FP_STAGE_TRAVEL[s],
+        color: FP_STAGE_COL[s],
+        stage: s
+      });
+    }
+
+    /* bucket triangles by the stage of their first vertex */
+    var buckets = [[], [], [], [], []];
+    var idx = fp.idx, stageOf = st.stageOf;
+    for (var t = 0; t < idx.length; t += 3) {
+      buckets[stageOf[idx[t]]].push(idx[t], idx[t+1], idx[t+2]);
+    }
+
+    for (var s2 = 0; s2 < 5; s2++) {
+      var tri = buckets[s2];
+      var used = {};
+      var order = [];
+      for (var q = 0; q < tri.length; q++) {
+        var v = tri[q];
+        if (!(v in used)) { used[v] = order.length; order.push(v); }
+      }
+      var pos = new Float32Array(order.length * 3);
+      var nrm = new Float32Array(order.length * 3);
+      for (var w = 0; w < order.length; w++) {
+        var vi = order[w];
+        pos[w*3]   = fp.pos[vi*3];
+        pos[w*3+1] = fp.pos[vi*3+1];
+        pos[w*3+2] = fp.pos[vi*3+2];
+        nrm[w*3]   = fp.nrm[vi*3];
+        nrm[w*3+1] = fp.nrm[vi*3+1];
+        nrm[w*3+2] = fp.nrm[vi*3+2];
+      }
+      var ix = new Array(tri.length);
+      for (var r = 0; r < tri.length; r++) ix[r] = used[tri[r]];
+      parts[s2].mesh = { pos: pos, nrm: nrm, idx: ix };
+      parts[s2].vertCount = order.length;
+    }
+    return parts;
+  }
+
+  /* ── the Sigma fp ─────────────────────────────────────────────
+     Real geometry from the scan, not a stand-in. Loaded as a flat
+     binary blob (see tools/stl-to-blob.py) rather than glTF, because
+     this is a single untextured mesh and parsing glTF's accessor
+     tables in the page would be several hundred lines to save nothing.
+
+     The blob arrives Y-up with the lens mount facing -x, centred on
+     its bounding box with the longest axis normalised to 1. */
+  function loadFP(url) {
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("fp " + r.status);
+        return r.json();
+      })
+      .then(function (meta) {
+        return fetch(url.replace(/\.json$/, ".bin"))
+          .then(function (r) { return r.arrayBuffer(); })
+          .then(function (buf) {
+            var f32 = new Float32Array(buf, meta.posOffset, meta.vertices * 3);
+            var nrm = new Float32Array(buf, meta.nrmOffset, meta.vertices * 3);
+            var u32 = new Uint32Array(buf, meta.idxOffset, meta.indexCount);
+            /* The scan is a real object, so it is grey rather than
+               brand-orange. The sensor still reads as the accent
+               because it is where the orange accent geometry sits. */
+            return { meta: meta, pos: f32, nrm: nrm, idx: u32 };
+          });
+      });
+  }
+
+  /* ── the fp, exploded along its optical axis ──────────────────
+     The scan is one closed shell, so an "exploded view" has to assign
+     vertices to stages by their position along -x (the front-to-back
+     axis). That gives a genuine teardown of the real body rather than
+     five primitives pretending to be a camera. */
+  function fpStages(fp) {
+    var p = fp.pos, n = fp.meta.vertices;
+    /* Bucket along the optical axis. The scan is Z-up, so its height
+       axis is what becomes "front-to-back" once the model is stood
+       upright by BASE_PITCH — the lens mount normal. Stage 0 and 1 sit
+       near the mount, 4 at the rear. */
+    var minA = 1e30, maxA = -1e30;
+    var i, a;
+    for (i = 0; i < n; i++) { a = p[i*3+1]; if (a < minA) minA = a; if (a > maxA) maxA = a; }
+    var span = maxA - minA;
+
+    /* 5 bands across the depth of the body: front cap, lens mount and
+       front plate, mid-body, rear plate, back cap. */
+    /* The mount is a thin ring at the very front of the body, so its
+       band is narrow (0.04-0.13) rather than a quarter of the depth. */
+    var EDGES = [0.00, 0.04, 0.13, 0.55, 0.84, 1.00];
+    var stageOf = new Uint8Array(n);
+    for (i = 0; i < n; i++) {
+      var t = (p[i*3+1] - minA) / span;
+      var s = 0;
+      while (s < 4 && t > EDGES[s+1]) s++;
+      stageOf[i] = s;
+    }
+    return { stageOf: stageOf, minA: minA, span: span };
+  }
+
   /* ── shaders ─────────────────────────────────────────────────
      The position chunk is shared by the solid and point programs so
      both agree exactly on where everything is at any t. */
@@ -365,7 +511,12 @@
 
     var gl = canvas.getContext("webgl2", {
       alpha: true, antialias: true, premultipliedAlpha: false,
-      powerPreference: "high-performance"
+      powerPreference: "high-performance",
+      /* Only when asked. preserveDrawingBuffer makes the buffer readable
+         after compositing, which is what screenshot-based tooling needs
+         to see a frame at all — but it costs a buffer copy every frame,
+         so the page itself must not pay for it. */
+      preserveDrawingBuffer: !!opts.preserve
     });
     if (!gl) return;
     this.gl = gl;
@@ -384,7 +535,14 @@
 
     var rnd = rng(0x5eed1a);
     this.rnd = rnd;
-    var parts = cameraParts();
+    var fp = opts.fp;
+    if (!fp) return;                 /* no geometry, no scene */
+
+    /* The real fp becomes five exploded stages along its own optical
+       axis. Each stage is a slice of the scan, so the "explode" is a
+       real teardown of the real body. */
+    var st = fpStages(fp);
+    var parts = fpParts(fp, st);
     var logo = logoMesh();
 
     this._buildSolid(parts, logo);
@@ -493,6 +651,9 @@
 
   /* The cloud: one point per sample, each knowing its mesh home, a
      scatter target, and a spot on the logo. */
+  /* Point count is a function of surface area, not a fixed number: the
+     fp is 1.0 long where the old primitives were 2.3, so the same count
+     is roughly 5x denser per unit area. */
   Scene.prototype._buildPoints = function (parts, logo, rnd) {
     var gl = this.gl;
     var total = this.count;
@@ -537,7 +698,7 @@
            enough jitter to look granular. */
         var th = rnd()*Math.PI*2, ph = Math.acos(2*rnd()-1);
         var edge = (k===0||k===4) ? 1.0 : 0.82;
-        var rr = (0.16 + 0.62*Math.pow(rnd(), 0.7)) * edge;
+        var rr = (0.30 + 0.78*Math.pow(rnd(), 0.55)) * edge;
         sca[v*3]   = Math.sin(ph)*Math.cos(th)*rr;
         sca[v*3+1] = Math.cos(ph)*rr*0.72;
         sca[v*3+2] = Math.sin(ph)*Math.sin(th)*rr;
@@ -599,7 +760,11 @@
       var er = (t - 2.8) / 1.2;
       S.camAlpha = 1 - Math.max(0, (er - 0.82) / 0.18);
       S.explode = e;
-      S.spin = 0.18 + (0.52 - 0.18) * e;
+      /* Spin stays shallow: the fp's most legible view is its front
+         (lens mount), which faces the viewer at spin 0. Any larger
+         swing turns the body three-quarters away and the silhouette
+         stops reading as a camera. */
+      S.spin = 0.18 + (0.34 - 0.18) * e;
       S.tilt = 0.10 + (0.05 - 0.10) * e;
     } else if (t < 4.4) {                            /* DISSOLVE */
       var d = ease((t - 4.0) / 0.4);
@@ -607,11 +772,11 @@
       S.cloud = d;
       S.camAlpha = 1 - d;
       S.pointAlpha = d;
-      S.spin = 0.52 + (0.68 - 0.52) * d;
+      S.spin = 0.34 + (0.50 - 0.34) * d;
       S.tilt = 0.05;
     } else if (t < 5.2) {                            /* CLOUD */
       S.explode = 1; S.cloud = 1; S.pointAlpha = 1;
-      S.spin = 0.68 + (0.72 - 0.68) * ((t - 4.4) / 0.8);
+      S.spin = 0.50 + (0.52 - 0.50) * ((t - 4.4) / 0.8);
       S.tilt = 0.05;
     } else if (t < 6.4) {                            /* CONDENSE */
       var cr = (t - 5.2) / 1.2;
@@ -648,11 +813,23 @@
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     var aspect = w / h;
-    var dist = 4.35 / S.zoom;
+    /* The fp is normalised to a longest axis of 1.0, so the camera sits
+       much closer than it did for the old 2.3-unit primitives. */
+    var dist = 2.75 / S.zoom;
     perspective(this.mProj, 0.62, aspect, 0.1, 60);
-    lookAt(this.mView, [0.35, 1.05, dist], [0, 0.02, 0], [0, 1, 0]);
-    rotY(this.tmpA, S.spin);
-    rotX(this.tmpB, S.tilt);
+    /* Eye on the +z axis, level with the model's centre. An off-axis
+       eye adds a fixed downward tilt on top of S.tilt, which was
+       tipping the fp onto its back and showing the top plate. */
+    lookAt(this.mView, [0, 0, dist], [0, 0, 0], [0, 1, 0]);
+    /* A fixed base pitch stands the fp on its feet. Without it the
+       scan's own frame puts the top plate toward the viewer, because
+       the exporter aimed the lens mount at +z but left the body's
+       height axis lying in the screen plane. */
+    var pitch = S.tilt + BASE_PITCH;
+    var yaw = S.spin + BASE_YAW;
+    if (this.override) { pitch = this.override.pitch; yaw = this.override.yaw; }
+    rotY(this.tmpA, yaw);
+    rotX(this.tmpB, pitch);
     mul(this.mModel, this.tmpA, this.tmpB);
 
     var su = this.uSolid, pu = this.uPoint;
@@ -708,14 +885,18 @@
       gl.uniform1f(pu.uExplode, S.explode);
       gl.uniform1f(pu.uCloud, S.cloud);
       gl.uniform1f(pu.uCollapse, S.collapse);
-      gl.uniform1f(pu.uAlpha, S.pointAlpha * 0.85);
+      /* Alpha is per-point and the points are additive, so density
+         and brightness are the same problem. 26k points on a 1.0-long
+         fp are ~6x denser per unit area than 14k were on the old
+         2.3-unit primitives, which clips to a white disc. */
+      gl.uniform1f(pu.uAlpha, S.pointAlpha * 0.26);
       /* uSize is a world-space diameter, uPixel is pixels per world unit
          at unit depth, so the shader's single divide yields a real pixel
          size that shrinks with distance. 0.02 world units at the cloud's
          ~4.3 unit distance renders as a ~2.5px point. The upper clamp
          in the shader is what stops a near-camera particle from becoming
          a full-screen disc. */
-      gl.uniform1f(pu.uSize, 0.021);
+      gl.uniform1f(pu.uSize, 0.026);
       gl.uniform1f(pu.uPixel, h / (2 * Math.tan(0.62 / 2)));
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
@@ -728,7 +909,26 @@
   };
 
   /* ── public ───────────────────────────────────────────────────── */
-  function create(canvas, opts) { return new Scene(canvas, opts); }
+  /* The scene needs the real fp mesh before it can build anything, and
+     the mesh arrives over fetch, so create() is async. Callers that
+     cannot await get a null scene and fall back to the flat mark. */
+  /* Resolve the mesh against gl.js's OWN url, not the page's. The
+     capture page, the contact sheet and the site root all sit at
+     different depths, and a page-relative path breaks in two of
+     them. */
+  var BASE = (function () {
+    var s = document.currentScript;
+    if (s && s.src) return s.src.replace(/[^/]*$/, "");
+    return "";
+  })();
+
+  function create(canvas, opts) {
+    opts = opts || {};
+    var url = opts.fpUrl || (BASE + "assets/models/sigma-fp.json");
+    return loadFP(url).then(function (fp) {
+      return new Scene(canvas, Object.assign({}, opts, { fp: fp }));
+    });
+  }
 
   window.CMPRSSR3D = {
     create: create,

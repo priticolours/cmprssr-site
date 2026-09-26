@@ -53,21 +53,26 @@ const PAGE = `<!doctype html>
 <body>
 <div id="wrap" style="position:relative">
   <canvas id="c"></canvas>
-  <div id="wm"><span class="gl" data-mark="compact"></span><b>cmprssr</b><span>CINEMADNG · R3D → DNG</span></div>
+  <div id="wm"><span class="gl" data-mark="compact"></span><b>cmprssr</b><span>CINEMADNG → DNG</span></div>
 </div>
 <script src="/gl.js"></script>
 <script src="/mark.js"></script>
 <script>
-  const scene = window.CMPRSSR3D.create(document.getElementById('c'), { count: 26000 });
+  /* create() is async: the fp mesh is fetched before the scene exists. */
+  window.__scene = null;
+  window.CMPRSSR3D.create(document.getElementById('c'), { count: 15000 })
+    .then(function (s) { window.__scene = s; window.__ok = !!(s && s.ok); })
+    .catch(function (e) { window.__err = String(e && e.message || e); window.__ok = false; });
+
   const wm = document.getElementById('wm');
   window.__draw = function (t) {
-    scene.draw(t);
+    if (!window.__scene) return false;
+    window.__scene.draw(t);
     /* the wordmark resolves with the logo, exactly as on the page */
     var k = t >= 6.4 ? 1 : (t >= 5.2 ? Math.max(0, ((t - 5.2) / 1.2 - 0.55) / 0.45) : 0);
     wm.style.opacity = k.toFixed(3);
-    return !!scene.ok;
+    return !!window.__scene.ok;
   };
-  window.__ok = scene.ok;
 </script>
 </body></html>`;
 
@@ -120,7 +125,11 @@ async function main() {
   await writeFile(capturePath, PAGE);
 
   await ctx.goto(origin + "/.capture.html", { waitUntil: "load" });
-  await ctx.waitForFunction("window.__ok === true", null, { timeout: 30000 });
+  /* the scene only exists once the fp mesh has been fetched and built,
+     so the gate is __ok, not a sync call */
+  await ctx.waitForFunction("window.__ok === true", null, { timeout: 60000 });
+  const bootErr = await ctx.evaluate(() => window.__err || null);
+  if (bootErr) throw new Error("capture page failed to build the scene: " + bootErr);
 
   const total = Math.round(CYCLE * FPS);
   console.log(`capturing ${total} frames @ ${FPS}fps, ${SIZE}px`);

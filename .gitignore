@@ -3,3 +3,8 @@
 dist/frames/
 .testdist/
 .capture.html
+
+# The .glb was only an intermediate for the Blender preview; the site
+# loads assets/models/sigma-fp.bin. Keep the STL-to-blob script, drop
+# the 1.3MB binary it used to write.
+assets/models/*.glb

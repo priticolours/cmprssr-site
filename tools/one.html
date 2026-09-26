@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Single large frame of the fp, for checking which face is toward
+     the camera. The 12-up contact sheet is too small for that. -->
+<html><head><meta charset="utf-8"><style>
+body { margin:0; background:#0b131a; }
+canvas { display:block; }
+</style></head><body>
+<canvas id="c" width="900" height="600"></canvas>
+<script src="/gl.js"></script>
+<script>
+window.__ok = false;
+window.__err = null;
+window.CMPRSSR3D.create(document.getElementById('c'), { count: 15000, preserve: true })
+  .then(function (s) { window.__s = s; window.__ok = !!(s && s.ok); })
+  .catch(function (e) { window.__err = String(e && e.message || e); window.__ok = false; });
+</script>
+</body></html>

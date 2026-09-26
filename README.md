@@ -1,10 +1,12 @@
 # cmprssr-site
 
 The public site for **cmprssr** — a native macOS app that batch-compresses
-CinemaDNG and R3D footage into DNGs DaVinci Resolve can still grade at full
-raw latitude.
+CinemaDNG footage into DNGs DaVinci Resolve can still grade at full raw
+latitude.
 
 **Live:** https://priticolours.github.io/cmprssr-site/
+
+Built by [Carl Perkins](https://github.com/priticolours).
 
 ## What's here
 
@@ -16,12 +18,14 @@ gl.js           the 3D piece (raw WebGL2, no libraries)
 stage3d.js      runs the piece, syncs the readout to its clock
 page.js         scroll reveals + the download-state check
 assets/         logo, favicons, social card
+assets/models/  the Sigma fp mesh the 3D piece renders
 dist/           exported video loops and stills
 tools/          the generators (not needed to serve the site)
 ```
 
-No build step, no dependencies, no external requests. Clone and open
-`index.html`, or serve the folder with anything.
+No build step, no dependencies, no external requests except the GitHub
+releases check. Clone and serve the folder with anything — but see
+*Serving* below, because the 3D piece needs an http origin.
 
 ## The logo
 
@@ -35,22 +39,69 @@ identically on every machine rather than depending on a system font.
 
 ## The 3D piece
 
-Seven seconds, seamless loop: the camera builds from its exploded state,
-assembles, explodes along the optical axis, dissolves into a 26k-point
-cloud, and contracts back into the logo.
+Seven seconds, seamless loop: the fp converges from its exploded state,
+assembles, explodes along its optical axis, dissolves into a 15k-point cloud,
+and contracts back into the logo.
+
+The camera is the **real Sigma fp** — the scan in `DUMP/fp model`, not a
+stand-in. `tools/stl-to-blob.py` reduces 59,992 triangles to 42,000, bakes the
+Z-up-to-Y-up rotation into the coordinates, normalises the longest axis to 1.0,
+and writes a flat interleaved blob (`assets/models/sigma-fp.bin`, 1.1MB) plus
+a JSON header. No glTF, because parsing accessor tables in the page for one
+untextured mesh would be several hundred lines to save nothing.
+
+The body is cut into five stages along its own optical axis, so the explode
+is a real teardown of the real geometry.
 
 Raw WebGL2. Every point carries three positions — on the mesh, scattered in
-the cloud, and on the logo — and one vertex shader lerps between them, so
-the handoff from cloud to solid geometry is exact rather than approximate.
+the cloud, and on the logo — and one vertex shader lerps between them, so the
+handoff from cloud to solid geometry is exact rather than approximate.
+
+## Serving
+
+`gl.js` fetches the mesh, and `fetch()` is blocked on the `file:` origin, so
+opening `index.html` straight from Finder renders the page with a flat mark
+where the 3D should be. Serve it over http:
+
+```bash
+python3 -m http.server 8000    # → http://localhost:8000
+```
+
+## Regenerating
 
 ```bash
 node tools/export-motion.mjs --fps 60 --size 1080   # → dist/
+node tools/export-assets.mjs                        # → assets/
 node tools/verify.js                                 # 13 checks
 ```
 
 `verify.js` covers asset resolution, console errors, horizontal overflow at
 five widths, that the canvas is genuinely painting, reduced-motion (must be
 byte-identical across frames), and the no-WebGL fallback.
+
+`tools/whowide.js <width>` names the exact elements causing an overflow
+instead of reporting a pixel count — worth reaching for first when a width
+fails.
+
+The Blender script regenerates the mesh from source:
+
+```bash
+blender --background --python tools/stl-to-blob.py
+```
+
+The fp is Z-up, so it needs a quarter turn about x to stand upright and
+face the viewer. That constant is `BASE_PITCH` in `gl.js`, and it was found
+by sweeping the pitch through the page's own renderer and looking at the
+result — not by reasoning about axis conventions, and not by measuring the
+mesh. Blender's `rotation_euler` and `gl.js`'s `rotX` disagree about axis
+order, so a Blender render cannot answer the question. Measure the mesh
+extents to check the export is sane; use `tools/pose.html` to choose the
+pose.
+
+```bash
+node tools/pose.js          # eight base pitches, side by side
+node tools/one.js 2.4       # one large frame at t=2.4
+```
 
 ## Deployment
 

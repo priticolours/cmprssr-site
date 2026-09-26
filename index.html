@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cmprssr — CinemaDNG &amp; R3D batch compressor for macOS</title>
-<meta name="description" content="cmprssr batch-compresses CinemaDNG and R3D footage into DNGs DaVinci Resolve can still grade at full raw latitude. Honest ratios measured from tile payload bytes. macOS 13+.">
+<title>cmprssr — CinemaDNG batch compressor for macOS</title>
+<meta name="description" content="cmprssr batch-compresses CinemaDNG footage into DNGs DaVinci Resolve can still grade at full raw latitude. Honest ratios measured from tile payload bytes. macOS 13+.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0b131a">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="cmprssr — CinemaDNG &amp; R3D batch compressor">
+<meta property="og:title" content="cmprssr — CinemaDNG batch compressor">
 <meta property="og:description" content="Shrink raw footage. Keep every grading control. Native macOS app.">
 <meta property="og:image" content="assets/social-card.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -34,8 +34,8 @@
       <h1>Shrink the raw.<br><span class="dim">Keep the grade.</span></h1>
 
       <p class="lede">
-        A native macOS app that batch-compresses CinemaDNG and R3D footage into
-        DNGs DaVinci Resolve can still grade at full raw latitude — with honest
+        A native macOS app that batch-compresses CinemaDNG footage into DNGs
+        DaVinci Resolve can still grade at full raw latitude — with honest
         ratios measured from tile payload bytes, not whole-file arithmetic.
       </p>
 
@@ -45,7 +45,7 @@
         </a>
         <a class="btn btn--ghost" href="#how">How it works</a>
       </div>
-      <p class="btn-note">macOS 13+ · beta · requires Adobe DNG Converter</p>
+      <p class="btn-note">macOS 13+ · beta · requires DNG Converter</p>
 
       <dl class="stat-strip">
         <div>
@@ -139,52 +139,17 @@
   </div>
 </section>
 
-<!-- ── how it works ─────────────────────────────────────────────── -->
-<section id="how" style="background:var(--ink-2);border-block:1px solid var(--hair-soft)">
+<!-- ── the camera, built from CinemaDNG ─────────────────────────── -->
+<!-- This is the target the hero's point cloud condenses into, so the
+     figure and the animation are the same object: the real Sigma fp,
+     exploded along the optical axis. -->
+<section id="how" class="fp-section">
   <div class="wrap">
     <div class="sec-head rise">
-      <div class="eyebrow">How it works</div>
-      <h2>Point at a folder. Pick a level. Get gradeable DNGs.</h2>
-      <p class="lede">
-        cmprssr drives Adobe DNG Converter in parallel batches, reports the
-        ratio from real tile payload bytes, and verifies every output before
-        it calls the job done.
-      </p>
+      <div class="eyebrow">The source</div>
+      <h2>A Sigma fp, taken apart.</h2>
     </div>
-
-    <div class="steps rise">
-      <div class="step">
-        <div class="step-n">01</div>
-        <h3>Load a folder</h3>
-        <p>Recursive or not. cmprssr scans for CinemaDNG and R3D, reads each
-        file's compression tag, and estimates the output honestly before you
-        commit a single run.</p>
-      </div>
-      <div class="step">
-        <div class="step-n">02</div>
-        <h3>Pick a level</h3>
-        <p>Three tiers, no marketing language between them. Already-lossless
-        folders are passed through untouched so the output reel stays
-        complete.</p>
-      </div>
-      <div class="step">
-        <div class="step-n">03</div>
-        <h3>Run and verify</h3>
-        <p>Batches of 16 across <span class="mono">max(2, cores / 2)</span>
-        workers. Every output DNG is parsed back — tiling, crop size, required
-        tags — and a failure falls back to the original.</p>
-      </div>
-    </div>
-
-    <!-- the exploded camera stack, full width: the mark as a diagram -->
-    <figure class="diagram rise" style="margin-inline:0">
-      <div data-mark="full" data-size="700" style="width:100%"></div>
-      <figcaption>
-        The optical stack, pulled apart — front element, barrel, sensor, rear
-        body. cmprssr compresses the payload behind the sensor plane; the
-        geometry in front of it is what you point at it.
-      </figcaption>
-    </figure>
+    <div class="fp-stage" data-fp-diagram></div>
   </div>
 </section>
 
@@ -221,10 +186,10 @@
 
       <div class="level">
         <h3>High Compression</h3>
-        <p>Adobe's lossy DNG, with preview and fast-load retained. The
-        smallest files by a wide margin and the only tier with a visible
-        quality trade-off. Still fully raw in Resolve — best for proxies and
-        oversampled footage.</p>
+        <p>Lossy DNG, with preview and fast-load retained. The smallest files
+        by a wide margin and the only tier with a visible quality trade-off.
+        Still fully raw in Resolve — best for proxies and oversampled
+        footage.</p>
         <div class="args"><b>-lossy</b> -p1 -fl</div>
       </div>
     </div>
@@ -247,8 +212,8 @@
       </div>
       <div class="req">
         <span class="k">ENG</span>
-        <p>Adobe DNG Converter. cmprssr detects it and offers to install it
-        for you if it's missing.</p>
+        <p>DNG Converter. cmprssr detects it and offers to install it for you
+        if it's missing.</p>
       </div>
       <div class="req">
         <span class="k">DISK</span>
@@ -257,8 +222,8 @@
       </div>
       <div class="req">
         <span class="k">RAW</span>
-        <p>CinemaDNG and R3D folders. Other raw formats pass through the
-        converter unchanged.</p>
+        <p>CinemaDNG folders. Other raw formats pass through the converter
+        unchanged.</p>
       </div>
     </div>
   </div>
@@ -283,24 +248,63 @@
       </a>
     </div>
     <p class="btn-note rise" style="margin-top:16px">
-      Native SwiftUI and Tauri builds in progress. R3D support via the same
-      pipeline.
+      Native SwiftUI and Tauri builds in progress.
     </p>
   </div>
 </section>
 
+<!-- ── contact / credits ────────────────────────────────────────── -->
 <footer>
-  <div class="wrap foot">
-    <div class="lockup">
-      <span data-mark="compact" data-size="22"></span>
-      <b style="font-size:15px">cmprssr</b>
+  <div class="wrap">
+
+    <div class="foot-grid">
+      <div class="foot-col">
+        <div class="eyebrow">Contact</div>
+        <p class="foot-note">
+          Bugs, feature requests, or a reel that won't compress the way you
+          expected — open an issue or get in touch.
+        </p>
+        <nav class="foot-links">
+          <a href="https://github.com/priticolours/cmprssr-site/issues">Report an issue</a>
+          <a href="https://github.com/carlperkins">GitHub</a>
+        </nav>
+      </div>
+
+      <div class="foot-col">
+        <div class="eyebrow">This site</div>
+        <p class="foot-note">
+          No build step, no framework, no tracking, no external requests but
+          the download check. The source is public — read it, fork it, improve
+          the thing.
+        </p>
+        <nav class="foot-links">
+          <a href="https://github.com/priticolours/cmprssr-site">Site source</a>
+          <a href="https://github.com/priticolours/cmprssr-site/issues">Report a problem</a>
+        </nav>
+      </div>
+
+      <div class="foot-col">
+        <div class="eyebrow">Built with</div>
+        <ul class="foot-oss">
+          <li>Raw WebGL2 — no 3D library</li>
+          <li>System mono &amp; sans stacks</li>
+          <li>DNG Converter, driven as a subprocess</li>
+          <li>Rust engine, Tauri &amp; SwiftUI front ends</li>
+        </ul>
+      </div>
     </div>
-    <p>Built by priti · macOS 13+ · beta</p>
-    <nav>
-      <a href="https://github.com/priticolours/cmprssr-native">App</a>
-      <a href="https://github.com/priticolours/cmprssr">Original</a>
-      <a href="https://github.com/priticolours?tab=repositories">More work</a>
-    </nav>
+
+    <div class="foot-base">
+      <div class="lockup">
+        <span data-mark="compact" data-size="22"></span>
+        <b style="font-size:15px">cmprssr</b>
+      </div>
+      <p>Built by <a class="credit" href="https://github.com/carlperkins">Carl Perkins</a> · macOS 13+ · beta</p>
+      <nav class="foot-links foot-links--inline">
+        <a href="https://github.com/carlperkins">github.com/carlperkins</a>
+      </nav>
+    </div>
+
   </div>
 </footer>
 

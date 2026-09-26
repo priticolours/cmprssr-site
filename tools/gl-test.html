@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Contact sheet for the fp motion piece: every phase of the 7s loop,
+     drawn into one tall canvas row by row. Development only.
+
+     Served over http (not file://) because gl.js fetches the fp mesh
+     and fetch() is blocked on the file: origin. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>cmprssr 3D contact sheet</title>
+<style>
+  body { margin:0; background:#0b131a; }
+  #wrap { display:flex; flex-direction:column; }
+  canvas { display:block; width:340px; height:340px; }
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script src="../gl.js"></script>
+<script>
+(async () => {
+  const TIMES = [0.5, 1.5, 2.4, 3.2, 3.35, 3.8, 4.2, 4.8, 5.6, 6.0, 6.6, 6.95];
+  const wrap = document.getElementById("wrap");
+  const canvases = TIMES.map(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 340;
+    wrap.appendChild(c);
+    return c;
+  });
+
+  window.__ok = false;
+  window.__err = null;
+  try {
+    const first = await window.CMPRSSR3D.create(canvases[0], { count: 26000 });
+    window.__ok = !!(first && first.ok);
+    // one scene per canvas would fetch the mesh 12 times; instead build
+    // one and re-point it, which the API supports via drawTarget
+    for (let i = 0; i < TIMES.length; i++) {
+      const scene = i === 0 ? first : await window.CMPRSSR3D.create(canvases[i], { count: 26000 });
+      scene.draw(TIMES[i]);
+    }
+  } catch (e) {
+    window.__err = String(e && e.message || e);
+  }
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>

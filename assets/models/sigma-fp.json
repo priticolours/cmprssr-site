@@ -1,0 +1,10 @@
+{
+  "vertices": 29159,
+  "triangles": 42000,
+  "posBytes": 349908,
+  "posOffset": 0,
+  "nrmOffset": 349908,
+  "idxOffset": 699816,
+  "indexCount": 126000,
+  "note": "STL was Z-up, -x front; baked to Y-up with front still -x. Longest axis normalised to 1.0, centred on the bounding box."
+}

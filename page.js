@@ -36,7 +36,6 @@
     var REPO = "priticolours/cmprssr-native";
     var PAGE = "https://github.com/" + REPO + "/releases";
     var LABEL = "Download for macOS";
-    var NOTE = "macOS 13+ · beta · requires Adobe DNG Converter";
 
     fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
       headers: { Accept: "application/vnd.github+json" }
