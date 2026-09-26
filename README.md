@@ -39,9 +39,9 @@ identically on every machine rather than depending on a system font.
 
 ## The 3D piece
 
-Seven seconds, seamless loop: the fp converges from its exploded state,
-assembles, explodes along its optical axis, dissolves into a 15k-point cloud,
-and contracts back into the logo.
+Nine seconds, seamless loop: the mark holds → the fp converges from its
+exploded state → it opens along its optical axis → it dissolves into a
+15k-point cloud → the cloud contracts into the mark → the mark holds again.
 
 The camera is the **real Sigma fp** — the scan in `DUMP/fp model`, not a
 stand-in. `tools/stl-to-blob.py` reduces 59,992 triangles to 42,000, bakes the
@@ -56,6 +56,39 @@ is a real teardown of the real geometry.
 Raw WebGL2. Every point carries three positions — on the mesh, scattered in
 the cloud, and on the logo — and one vertex shader lerps between them, so the
 handoff from cloud to solid geometry is exact rather than approximate.
+
+### Why the motion is built the way it is
+
+The first version was a chain of `if/else` phases, each with its own cubic
+ease. It looked mechanical no matter how the easing was tuned, because at
+every phase boundary the velocity snapped to zero and back up — a visible
+heartbeat. The current version uses two primitives:
+
+```js
+band(a, b)          // quintic ramp, 0 → 1 across [a, b]
+win(a, b, c, d)     // band(a,b) * (1 - band(c,d))  — a WINDOW
+```
+
+Windows are what make a loop cyclic. A plain ramp starts at 0 and ends at 1,
+which leaves the wrap with a hard 1→0 cut. A window rises and falls, so its
+value *and* slope are both 0 at each end; stack overlapping windows and nothing
+cuts, including at t=0/t=CYCLE. The camera drift is a pure cosine for the same
+reason — its value and slope match at the wrap by construction.
+
+Quintic rather than cubic because `6t⁵-15t⁴+10t³` has zero first *and* second
+derivative at both ends, so a ramp eases in and out without the settle a cubic
+leaves behind.
+
+`tools/smoothness.js` is the regression test. It lifts `timeline()` straight
+out of `gl.js` (rather than duplicating it, which would drift) and checks three
+things at 250 samples/second:
+
+- no scalar moves more than 0.02 in a single 4ms step — a pop;
+- value *and* slope at t=0 match t=CYCLE — a seam;
+- something is always on screen — a window that bottoms out at zero reads as a
+  blink, which is worse than any easing artefact.
+
+It is wired into `verify.js` as check 14.
 
 ## Serving
 
@@ -72,12 +105,13 @@ python3 -m http.server 8000    # → http://localhost:8000
 ```bash
 node tools/export-motion.mjs --fps 60 --size 1080   # → dist/
 node tools/export-assets.mjs                        # → assets/
-node tools/verify.js                                 # 13 checks
+node tools/verify.js                                 # 14 checks
 ```
 
 `verify.js` covers asset resolution, console errors, horizontal overflow at
 five widths, that the canvas is genuinely painting, reduced-motion (must be
-byte-identical across frames), and the no-WebGL fallback.
+byte-identical across frames), the no-WebGL fallback, and the motion itself
+via `smoothness.js`.
 
 `tools/whowide.js <width>` names the exact elements causing an overflow
 instead of reporting a pixel count — worth reaching for first when a width

@@ -337,46 +337,6 @@ section { padding-block: clamp(56px, 9vw, 104px); }
    Same GL scene as the hero, held at the condensed frame. Keeping one
    scene means the figure in the page is provably the same object the
    animation arrives at. */
-.fp-section {
-  background: var(--ink-2);
-  border-block: 1px solid var(--hair-soft);
-}
-.fp-stage {
-  position: relative;
-  /* Height only. A min-height alongside aspect-ratio makes the browser
-     grow the WIDTH to preserve the ratio, which pushes the section
-     off-screen on phones — 320px tall at 16:9 demands 569px of width
-     inside a 350px column. */
-  height: clamp(240px, 44vw, 420px);
-  border: 1px solid var(--hair-soft);
-  border-radius: 14px;
-  background:
-    radial-gradient(62% 62% at 50% 46%, rgba(95,123,142,.15), transparent 72%),
-    linear-gradient(168deg, #101922, #0c1319);
-  overflow: hidden;
-}
-.fp-stage canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-/* if WebGL is unavailable the stage explains itself rather than
-   leaving a hole in the page */
-.fp-stage::after {
-  content: "Your browser can't render this view — it needs WebGL 2.";
-  position: absolute;
-  inset: 0;
-  display: none;
-  place-items: center;
-  text-align: center;
-  padding: 0 12%;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  color: var(--fg-3);
-  background: var(--ink-2);
-}
-.fp-stage[data-fallback]::after { display: grid; }
-
 /* ── Quality table ───────────────────────────────────────────────── */
 .levels { border-top: 1px solid var(--hair); }
 .level {

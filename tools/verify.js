@@ -145,6 +145,27 @@ const srv = http.createServer((req,res)=>{
     await p.close();
   }
 
+  // 9. the motion itself: no pops, and a continuous loop seam
+  // Run as a child process because it needs gl.js's timeline, which is
+  // browser code. See tools/smoothness.js for the thresholds.
+  {
+    const { execFileSync } = require('child_process');
+    let out = '', ok = false;
+    try {
+      out = execFileSync('node',
+        [path.join(__dirname, 'smoothness.js')],
+        { encoding: 'utf8' });
+      ok = /no pops, seam is continuous/.test(out);
+    } catch (e) {
+      out = (e.stdout || '') + (e.stderr || '');
+    }
+    const worst = (out.match(/maxStep=([0-9.]+)/g) || [])
+      .map(s => parseFloat(s.replace('maxStep=', '')))
+      .reduce((a, b) => Math.max(a, b), 0);
+    check('motion is smooth and the loop is seamless', ok,
+      `max single-step delta ${worst.toFixed(5)}`);
+  }
+
   console.log(fails ? `\n${fails} FAILURES` : '\nall checks passed');
   await b.close(); srv.close();
   process.exit(fails?1:0);

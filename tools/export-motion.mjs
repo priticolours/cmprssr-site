@@ -14,6 +14,7 @@ import { chromium } from "/Users/priticolours/.hermes/cache/scratch/node_modules
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, rm, readdir, writeFile } from "node:fs/promises";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -30,7 +31,12 @@ const FPS = parseInt(arg("fps", "60"), 10);
 const SIZE = parseInt(arg("size", "1080"), 10);
 const OUT = path.resolve(ROOT, arg("out", "dist"));
 const FRAMES = path.join(OUT, "frames");
-const CYCLE = 7.0;
+/* Read the cycle from gl.js rather than hardcoding it: the renderer's
+   timeline and the exported video must be the same loop, and a stale
+   constant here silently produces a truncated file. */
+const glSrc = fs.readFileSync(path.join(ROOT, "gl.js"), "utf8");
+const CYCLE = parseFloat((glSrc.match(/var CYCLE = ([0-9.]+)/) || [])[1]);
+if (!CYCLE) throw new Error("could not read CYCLE from gl.js");
 
 const EXE = process.env.HOME +
   "/Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/" +
@@ -169,7 +175,8 @@ async function main() {
     "-b:v", "0", "-row-mt", "1", "-an", base + ".webm"]);
 
   /* 6 key stills for decks and docs */
-  const picks = [0, 1.5, 2.4, 3.6, 4.8, 6.6];
+  /* one still per beat of the 9s loop */
+  const picks = [0.3, 2.0, 3.0, 4.2, 5.0, 6.6];
   for (let i = 0; i < picks.length; i++) {
     await run("ffmpeg", ["-y", "-i", path.join(FRAMES,
       String(Math.round(picks[i] * FPS)).padStart(5, "0") + ".png"),

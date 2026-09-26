@@ -1,16 +1,19 @@
 /* ═══════════════════════════════════════════════════════════════════
    gl.js — the cmprssr 3D motion graphic
 
-   Raw WebGL2, no libraries. One animation, 7 seconds, seamless loop:
+   Raw WebGL2, no libraries. One animation, 9 seconds, seamless loop:
 
-     0.0 – 1.0   LOGO        two rectangles hold
-     1.0 – 2.0   BUILD       the fp converges from its exploded state
-     2.0 – 2.8   ASSEMBLED   the fp turns
-     2.8 – 4.0   EXPLODE     the real body separates along its optical axis
-     4.0 – 4.4   DISSOLVE    the fp becomes a point cloud
-     4.4 – 5.2   CLOUD       the cloud holds
-     5.2 – 6.4   CONDENSE    the cloud contracts into the logo
-     6.4 – 7.0   LOGO        hold — matches t=0, so the loop is seamless
+     0.0 – 1.2   LOGO        the two rectangles hold, camera still
+     1.2 – 2.8   ASSEMBLE    the fp converges from its exploded state
+     2.8 – 3.6   HOLD        assembled, drifting
+     3.6 – 5.0   TEARDOWN    the real body separates along its optical axis
+     4.2 – 5.0   DISSOLVE    the fp becomes a point cloud (overlaps)
+     5.2 – 6.2   CONDENSE    the cloud contracts into the logo
+     6.0 – 6.6   LOGO        the logo lands and holds to t=9
+
+   Nothing cuts. Every transition is a quintic over an overlapping
+   window, and the camera drift is a single slow cosine, so t=0 and
+   t=CYCLE share both value and slope and the seam is invisible.
 
    The camera is the real Sigma fp, from the scan in
    DUMP/fp model, sliced into five stages along its own optical axis
@@ -29,14 +32,17 @@
 (function () {
   "use strict";
 
-  var CYCLE = 7.0;
+  var CYCLE = 9.0;
 
+  /* The fp is a black magnesium body, so the greys sit dark — but not so
+     dark that the new fill light has nothing to lift. These are the
+     albedo values, before lighting. */
   var C = {
-    lens:  [0.81, 0.89, 0.93],
-    steel: [0.50, 0.61, 0.68],
-    body:  [0.30, 0.40, 0.48],
-    bodyLo:[0.20, 0.28, 0.35],
-    signal:[0.94, 0.40, 0.18]
+    lens:  [0.86, 0.92, 0.95],
+    steel: [0.62, 0.70, 0.76],
+    body:  [0.44, 0.52, 0.59],
+    bodyLo:[0.32, 0.39, 0.46],
+    signal:[0.96, 0.42, 0.18]
   };
 
   /* ── tiny mat4 ───────────────────────────────────────────────── */
@@ -421,6 +427,12 @@
     "}"
   ].join("\n");
 
+  /* Three-point rig rather than one light. A single directional with a
+     low ambient leaves every face perpendicular to it black, which is
+     why the fp read as a dark smudge whenever it drifted off-axis. The
+     fill is what keeps the form legible from any angle, and the soft
+     key with a wide falloff is closer to how a product shot is lit
+     than a hard specular hit. */
   var FS_SOLID = [
     "#version 300 es",
     "precision highp float;",
@@ -429,13 +441,26 @@
     "out vec4 o;",
     "void main() {",
     "  vec3 N = normalize(vNrm);",
-    "  vec3 L = normalize(vec3(0.45, 0.75, 0.62));",
-    "  float d = max(dot(N, L), 0.0);",
     "  vec3 V = normalize(-vView);",
-    "  vec3 H = normalize(L + V);",
-    "  float sp = pow(max(dot(N, H), 0.0), 42.0) * 0.55;",
-    "  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.6) * 0.30;",
-    "  vec3 c = vCol * (0.24 + 0.72 * d) + vec3(sp) + vCol * rim;",
+    /* key, high and slightly to the right, soft */
+    "  vec3 K = normalize(vec3(0.55, 0.82, 0.70));",
+    /* fill, low and to the left, broad and weak */
+    "  vec3 F = normalize(vec3(-0.70, -0.15, 0.45));",
+    /* rim, from behind and above, to separate the body from the page */
+    "  vec3 R = normalize(vec3(-0.30, 0.55, -0.78));",
+    "  float k = max(dot(N, K), 0.0);",
+    "  float f = max(dot(N, F), 0.0);",
+    "  float r = max(dot(N, R), 0.0);",
+    /* wrapped diffuse: the term that stops the unlit side going flat */
+    "  float wrap = max((dot(N, K) + 0.45) / 1.45, 0.0);",
+    "  vec3 H = normalize(K + V);",
+    "  float sp = pow(max(dot(N, H), 0.0), 34.0) * 0.30;",
+    "  float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);",
+    "  vec3 c = vCol * (0.34 + 0.52 * k + 0.16 * f)",
+    "        + vCol * wrap * 0.20",
+    "        + vCol * r * 0.26",
+    "        + vec3(0.62, 0.78, 0.88) * rim * 0.22",
+    "        + vec3(sp);",
     "  o = vec4(c, uAlpha);",
     "}"
   ].join("\n");
@@ -731,73 +756,98 @@
   };
 
   /* ── timeline ─────────────────────────────────────────────────
-     Everything the render needs, derived from t alone. */
+     Everything the render needs, derived from t alone.
+
+     The first version was a chain of if/else phases, each with its own
+     ease. That reads as mechanical no matter how good the easing is,
+     because at every phase boundary the velocity snaps to zero and
+     back up — the motion has a visible heartbeat.
+
+     This version is built from two primitives instead:
+
+       band(a, b)  a quintic ramp from 0 to 1 across [a, b]
+       win(a,b,c,d) band(a,b) * (1 - band(c,d))  — a WINDOW
+
+     Windows are what make the loop cyclic. A plain ramp starts at 0
+     and ends at 1, which leaves the wrap with a hard 1→0 cut; a
+     window rises and falls, so its value AND slope are 0 at both
+     ends. Stack the windows with overlapping edges and nothing ever
+     cuts, including at t=0/t=CYCLE.
+
+     The feel comes from the curve, not the phase structure: quintic
+     (6t^5-15t^4+10t^3) has zero first AND second derivative at both
+     ends, so it eases in and out without the visible settle a cubic
+     leaves behind. */
   function timeline(t) {
     t = ((t % CYCLE) + CYCLE) % CYCLE;
     var S = { explode:0, cloud:0, collapse:0,
               camAlpha:0, logoAlpha:0, pointAlpha:0,
               spin:0, tilt:0, zoom:1 };
 
-    /* The spin/tilt curve is continuous across every phase boundary.
-       t=0 and t=CYCLE hold identical values, so the loop has no seam.
-       Anchors: 0.30 → 0.12 → 0.18 → 0.52 → 0.68 → 0.72 → 0.30. */
-    if (t < 1.0) {                                   /* LOGO */
-      S.logoAlpha = 1;
-      S.spin = 0.30; S.tilt = 0.0;
-    } else if (t < 2.0) {                            /* BUILD */
-      var b = ease(Math.min(1, (t - 1.0) / 1.25));
-      S.logoAlpha = Math.max(0, 1 - (t - 1.0) * 3.2);
-      S.camAlpha = Math.min(1, (t - 1.0) * 3.2);
-      S.explode = 1 - b;
-      S.spin = 0.30 + (0.12 - 0.30) * b;
-      S.tilt = 0.0 + (0.10 - 0.0) * b;
-    } else if (t < 2.8) {                            /* ASSEMBLED */
-      S.camAlpha = 1;
-      S.spin = 0.12 + (0.18 - 0.12) * ((t - 2.0) / 0.8);
-      S.tilt = 0.10;
-    } else if (t < 4.0) {                            /* EXPLODE */
-      var e = ease((t - 2.8) / 1.2);
-      var er = (t - 2.8) / 1.2;
-      S.camAlpha = 1 - Math.max(0, (er - 0.82) / 0.18);
-      S.explode = e;
-      /* Spin stays shallow: the fp's most legible view is its front
-         (lens mount), which faces the viewer at spin 0. Any larger
-         swing turns the body three-quarters away and the silhouette
-         stops reading as a camera. */
-      S.spin = 0.18 + (0.34 - 0.18) * e;
-      S.tilt = 0.10 + (0.05 - 0.10) * e;
-    } else if (t < 4.4) {                            /* DISSOLVE */
-      var d = ease((t - 4.0) / 0.4);
-      S.explode = 1;
-      S.cloud = d;
-      S.camAlpha = 1 - d;
-      S.pointAlpha = d;
-      S.spin = 0.34 + (0.50 - 0.34) * d;
-      S.tilt = 0.05;
-    } else if (t < 5.2) {                            /* CLOUD */
-      S.explode = 1; S.cloud = 1; S.pointAlpha = 1;
-      S.spin = 0.50 + (0.52 - 0.50) * ((t - 4.4) / 0.8);
-      S.tilt = 0.05;
-    } else if (t < 6.4) {                            /* CONDENSE */
-      var cr = (t - 5.2) / 1.2;
-      var c = ease(cr);
-      S.explode = 1; S.cloud = 1;
-      S.collapse = c;
-      S.pointAlpha = cr > 0.82 ? 1 - (cr - 0.82) / 0.18 : 1;
-      S.logoAlpha = cr > 0.78 ? (cr - 0.78) / 0.22 : 0;
-      S.spin = 0.72 + (0.30 - 0.72) * c;
-      S.tilt = 0.05 + (0.0 - 0.05) * c;
-    } else {                                         /* LOGO hold */
-      S.collapse = 1; S.cloud = 1; S.explode = 1;
-      S.logoAlpha = 1;
-      S.spin = 0.30; S.tilt = 0.0;
-    }
+    function band(a, b) { return quintic((t - a) / (b - a)); }
+    function win(a, b, c, d) { return Math.min(band(a, b), 1 - band(c, d)); }
+
+    /* — who is on screen ————————————————————————————————
+       Three overlapping windows. The camera owns the middle of the
+       loop, the cloud bridges camera to logo, and the logo holds the
+       beginning and the end — which is what closes the seam. */
+    var body = win(0.95, 1.75, 4.30, 5.05);      /* the fp        */
+    /* the cloud holds a little longer so the logo has something to
+       land on: at 6.10s the two were down to 0.005 total and the
+       hand-off read as a blink */
+    var puff = win(4.15, 4.85, 5.85, 6.45);      /* the cloud     */
+    /* The mark leads in, then gets out of the way while the fp is the
+       subject, then returns. Holding it at full strength throughout made
+       the logo beat indistinguishable from the camera beat, which is why
+       the loop read as one long state instead of four. */
+    /* Two windows, not one ramp: the mark is genuinely on, off, then on
+       again, so its value is 1 at both ends of the loop and 0 in the
+       middle. The leading window starts at exactly 0 and the trailing
+       one never falls, so t=0 and t=CYCLE agree. */
+    /* The mark starts leaving at 0.80 and the fp starts arriving at
+       0.95, so they overlap by ~0.4s and there is no empty frame at
+       the hand-off. */
+    var mark = Math.max(win(-0.30, -0.10, 0.80, 1.30), band(5.85, 6.40));
+
+    S.camAlpha   = body;
+    S.cloud      = puff;
+    S.pointAlpha = puff;
+    S.logoAlpha  = mark;
+
+    /* — geometry ——————————————————————————————————————
+       Both are multiplied by their window, so a value only ever
+       matters while the thing it belongs to is actually drawn. */
+    /* the fp converges from its exploded state, then opens again */
+    S.explode  = Math.max(1 - band(1.10, 2.85), band(3.55, 5.30)) * body;
+    /* the cloud contracts into the logo */
+    S.collapse = band(5.10, 6.20) * puff;
+
+    /* — the camera move ————————————————————————————————
+       One slow drift across the whole loop, built from cosines so
+       value and slope match at the wrap by construction. Amplitude
+       is deliberately small: the fp reads best nearly front-on, and a
+       big swing turns the body three-quarters away. */
+    var u = t / CYCLE;
+    var drift = Math.cos(u * Math.PI * 2 - Math.PI * 0.5);
+    S.tilt = 0.05 + 0.03 * Math.cos(u * Math.PI * 2);
+    S.zoom = 1 + 0.028 * drift;
+
+    /* The spin is the one parameter that cannot simply be a function of
+       t, because the opening and closing beats show the LOGO with no
+       camera in it — and a value chosen there is unconstrained at the
+       wrap. So it is a pure cosine (value and slope both match at
+       t=0 and t=CYCLE) plus one term multiplied by the camera window,
+       which is identically zero at both ends of the loop. */
+    S.spin = 0.15 + 0.11 * drift + 0.10 * body;
     return S;
   }
 
-  function ease(x) {
+  /* Quintic smootherstep: 6t^5 - 15t^4 + 10t^3. Zero first and second
+     derivative at both ends, so a ramp has no visible start or stop —
+     which is the whole difference between "animated" and "mechanical". */
+  function quintic(x) {
     x = Math.max(0, Math.min(1, x));
-    return x < 0.5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
+    return x * x * x * (x * (x * 6 - 15) + 10);
   }
 
   /* ── draw ─────────────────────────────────────────────────────── */

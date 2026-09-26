@@ -26,7 +26,7 @@ const TYPES = { '.html':'text/html', '.js':'text/javascript', '.json':'applicati
 
   const b = await chromium.launch({ executablePath: EXE,
     args: ['--use-gl=angle','--enable-unsafe-swiftshader','--ignore-gpu-blocklist'] });
-  const p = await b.newPage({ viewport: { width: 360, height: 4300 }, deviceScaleFactor: 2 });
+  const p = await b.newPage({ viewport: { width: 1420, height: 1120 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 200)); });
   p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));

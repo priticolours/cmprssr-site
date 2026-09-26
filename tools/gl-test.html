@@ -10,7 +10,12 @@
 <title>cmprssr 3D contact sheet</title>
 <style>
   body { margin:0; background:#0b131a; }
-  #wrap { display:flex; flex-direction:column; }
+  /* a grid, so the whole loop reads at once instead of as a strip */
+  #wrap { display:grid; grid-template-columns:repeat(4,340px); gap:8px;
+          padding:8px; }
+  figure { margin:0; }
+  figcaption { color:#5f7b8e; font:10px ui-monospace,monospace;
+               text-align:center; padding-top:2px; }
   canvas { display:block; width:340px; height:340px; }
 </style>
 </head>
@@ -19,26 +24,36 @@
 <script src="../gl.js"></script>
 <script>
 (async () => {
-  const TIMES = [0.5, 1.5, 2.4, 3.2, 3.35, 3.8, 4.2, 4.8, 5.6, 6.0, 6.6, 6.95];
+  /* sampled across the new 9s loop: logo, assemble, hold, teardown,
+     dissolve, cloud, condense, logo */
+  const TIMES = [0.3, 1.2, 2.0, 2.9, 3.6, 4.2, 4.6, 5.0, 5.5, 6.0, 6.5, 8.6];
   const wrap = document.getElementById("wrap");
-  const canvases = TIMES.map(() => {
+  const scenes = [];
+  const canvases = TIMES.map((t) => {
+    const fig = document.createElement("figure");
     const c = document.createElement("canvas");
-    c.width = c.height = 340;
-    wrap.appendChild(c);
+    const cap = document.createElement("figcaption");
+    cap.textContent = "t=" + t.toFixed(1) + "s";
+    fig.appendChild(c); fig.appendChild(cap);
+    wrap.appendChild(fig);
     return c;
   });
 
   window.__ok = false;
   window.__err = null;
   try {
-    const first = await window.CMPRSSR3D.create(canvases[0], { count: 26000 });
+    const first = await window.CMPRSSR3D.create(canvases[0], { count: 15000, preserve: true });
     window.__ok = !!(first && first.ok);
-    // one scene per canvas would fetch the mesh 12 times; instead build
-    // one and re-point it, which the API supports via drawTarget
     for (let i = 0; i < TIMES.length; i++) {
-      const scene = i === 0 ? first : await window.CMPRSSR3D.create(canvases[i], { count: 26000 });
-      scene.draw(TIMES[i]);
+      const scene = i === 0 ? first
+        : await window.CMPRSSR3D.create(canvases[i], { count: 15000, preserve: true });
+      scenes.push(scene);
     }
+    /* draw only once the grid has laid out: draw() sizes the drawing
+       buffer from clientWidth, and a canvas with no layout is a no-op */
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    for (let i = 0; i < TIMES.length; i++) scenes[i].draw(TIMES[i]);
+    await new Promise(r => requestAnimationFrame(() => r()));
   } catch (e) {
     window.__err = String(e && e.message || e);
   }
