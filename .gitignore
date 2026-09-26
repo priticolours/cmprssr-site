@@ -1,0 +1,5 @@
+.DS_Store
+.shots/
+dist/frames/
+.testdist/
+.capture.html
