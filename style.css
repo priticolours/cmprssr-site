@@ -109,11 +109,34 @@ p { color: var(--fg-2); }
 
 /* ── Mark + lockup ───────────────────────────────────────────────── */
 .lockup { display: flex; align-items: center; gap: 12px; }
-.lockup b {
-  font-family: var(--mono);
-  font-weight: 700;
+
+/* The wordmark is a mask of assets/wordmark.svg — the same file the point
+   cloud is sampled from, so the letters the particles land on are
+   literally these letters. A mask rather than an <img> because the SVG
+   fills with currentColor, and an <img> would not inherit it; the alpha
+   channel is all a mask reads anyway, so the colour comes from the
+   background. No letter-spacing here: the outlines already carry pango's
+   own advance widths, and any tracking would shear the displayed width
+   away from the sampled geometry. Height is pango's 94/74 line box, which
+   is what makes this sit on the same baseline as the old 21px <b>. */
+.lockup-wm {
+  display: block;
+  flex: 0 0 auto;
   font-size: 21px;
-  letter-spacing: -.03em;
+  height: 1.27em;
+  aspect-ratio: 312 / 94;
+  background: var(--fg);
+  -webkit-mask: url(assets/wordmark.svg) no-repeat center / contain;
+  mask: url(assets/wordmark.svg) no-repeat center / contain;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 svg.mark { display: block; overflow: visible; }
 

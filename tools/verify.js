@@ -166,6 +166,35 @@ const srv = http.createServer((req,res)=>{
       `max single-step delta ${worst.toFixed(5)}`);
   }
 
+  // 10. the cloud cannot silently drop back to a low count.
+  // This is the failure the whole rework came from: the point cloud at
+  // 15k looked "low resolution" and nobody could tell from a screenshot
+  // whether a retune had halved it again. So assert the number, the
+  // target blob's integrity, and that no two-box endpoint survives.
+  {
+    const { execFileSync } = require('child_process');
+    const gl = fs.readFileSync(path.join(__dirname, '..', 'gl.js'), 'utf8');
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'assets', 'wordmark-target.json'), 'utf8'));
+    const bin = fs.statSync(
+      path.join(__dirname, '..', 'assets', 'wordmark-target.bin')).size;
+
+    check('wordmark target has >=100k samples', meta.count >= 100000, `${meta.count}`);
+    check('wordmark blob length matches count*3*4',
+      bin === meta.count * 3 * 4, `${bin}B vs ${meta.count * 3 * 4}B`);
+    check('no two-box logo endpoint remains',
+      !/logoMesh\s*\(/.test(gl) && !/logoStart|camCount/.test(gl));
+    // the desktop count is the blob's ceiling; anything higher silently
+    // reuses targets and clumps them
+    const m = /this\.count = opts\.count \|\| (\d+)/.exec(gl);
+    check('cloud count is the blob ceiling', !!m && Number(m[1]) === meta.count,
+      m ? m[1] : 'not found');
+    check('shader uniforms, locs() and draw() agree',
+      /shader uniforms, locs\(\) and draw\(\) all agree/.test(
+        execFileSync('node', [path.join(__dirname, 'check-uniforms.js')],
+          { encoding: 'utf8' })));
+  }
+
   console.log(fails ? `\n${fails} FAILURES` : '\nall checks passed');
   await b.close(); srv.close();
   process.exit(fails?1:0);

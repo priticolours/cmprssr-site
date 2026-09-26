@@ -10,7 +10,7 @@ canvas { display:block; }
 <script>
 window.__ok = false;
 window.__err = null;
-window.CMPRSSR3D.create(document.getElementById('c'), { count: 15000, preserve: true })
+window.CMPRSSR3D.create(document.getElementById('c'), { count: 150000, preserve: true })
   .then(function (s) { window.__s = s; window.__ok = !!(s && s.ok); })
   .catch(function (e) { window.__err = String(e && e.message || e); window.__ok = false; });
 </script>

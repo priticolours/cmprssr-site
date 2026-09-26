@@ -20,7 +20,7 @@ const tlSrc = src.slice(start, end);
 const factory = new Function('CYCLE', tlSrc + '; return timeline;');
 const tl = factory(CYCLE);
 
-const KEYS = ['explode','cloud','collapse','camAlpha','logoAlpha','pointAlpha','spin','tilt','zoom'];
+const KEYS = ['explode','cloud','collapse','camAlpha','pointAlpha','spin','tilt','zoom'];
 const N = 3600;                 /* 250 samples/sec — finer than any display */
 const dt = CYCLE / N;
 const e = 1e-5;
@@ -61,7 +61,7 @@ let thinnest = 1, at = 0;
 for (let i = 0; i < 9000; i++) {
   const t = i / 1000;
   const s = tl(t);
-  const visible = Math.max(s.logoAlpha, s.camAlpha, s.pointAlpha);
+  const visible = Math.max(s.camAlpha, s.pointAlpha);
   if (visible < thinnest) { thinnest = visible; at = t; }
 }
 const noBlank = thinnest > 0.10;

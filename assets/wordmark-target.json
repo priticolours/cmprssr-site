@@ -1,0 +1,12 @@
+{
+  "count": 150000,
+  "width": 1.3,
+  "height": 0.391650390625,
+  "raster": [
+    2048,
+    617
+  ],
+  "source": "pango-view DejaVu Sans Mono Bold 74, text=cmprssr",
+  "license": "DejaVu Sans Mono is SIL OFL 1.1. SF Mono is NOT redistributable as outlines and must not be used here.",
+  "note": "xyz float32, y-up, centred, z=0. Scene width = width."
+}

@@ -32,7 +32,7 @@ window.__err = null;
     try {
       /* preserveDrawingBuffer: without it the buffer is empty once the
          compositor has taken the frame, which is when a screenshot runs. */
-      const s = await window.CMPRSSR3D.create(c, { count: 15000, preserve: true });
+      const s = await window.CMPRSSR3D.create(c, { count: 150000, preserve: true });
       s.override = { pitch: pitch, yaw: 0 };
       scenes.push(s);
     } catch (e) { window.__err = String(e && e.message || e); }

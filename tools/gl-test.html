@@ -42,11 +42,11 @@
   window.__ok = false;
   window.__err = null;
   try {
-    const first = await window.CMPRSSR3D.create(canvases[0], { count: 15000, preserve: true });
+    const first = await window.CMPRSSR3D.create(canvases[0], { count: 150000, preserve: true });
     window.__ok = !!(first && first.ok);
     for (let i = 0; i < TIMES.length; i++) {
       const scene = i === 0 ? first
-        : await window.CMPRSSR3D.create(canvases[i], { count: 15000, preserve: true });
+        : await window.CMPRSSR3D.create(canvases[i], { count: 150000, preserve: true });
       scenes.push(scene);
     }
     /* draw only once the grid has laid out: draw() sizes the drawing

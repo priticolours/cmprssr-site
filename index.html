@@ -28,7 +28,13 @@
     <div class="hero-copy">
       <div class="lockup">
         <span data-mark="compact" data-size="30"></span>
-        <b>cmprssr</b>
+        <!-- The wordmark is a mask of the SAME file the point cloud is
+             sampled from (assets/wordmark.svg), so the letterforms the
+             particles land on are literally the letterforms here. A
+             system-font <b> would be a different shape, and the motion's
+             one real claim would be only approximately true. -->
+        <b class="lockup-wm" aria-hidden="true"></b>
+        <span class="sr-only">cmprssr</span>
       </div>
 
       <h1>Shrink the raw.<br><span class="dim">Keep the grade.</span></h1>

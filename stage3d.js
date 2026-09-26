@@ -59,6 +59,20 @@
     };
   }
 
+  /* Point budget. The wordmark blob holds 150k samples, so that is the
+     ceiling and anything above it would only duplicate letters. Phones
+     get fewer: the cloud is additive, so a low-power GPU is filling
+     ~10x the overdraw a desktop does, and the honest trade is letter
+     solidity on a big screen over a smooth frame rate in a hand. The
+     subset is a fixed stride, not a fresh random draw, so the wordmark
+     is the same shape at every count. */
+  function pointCount() {
+    var coarse = window.matchMedia &&
+      window.matchMedia("(pointer: coarse)").matches;
+    var small = Math.min(window.innerWidth || 1280, window.innerHeight || 800) < 700;
+    return (coarse || small) ? 70000 : 150000;
+  }
+
   /* ── the flat-mark fallback ──────────────────────────────────
      A failed WebGL context should cost the page a picture, not a
      hole, so the SVG mark is injected in the space the canvas
@@ -95,7 +109,7 @@
     /* create() is async: the real fp mesh is fetched before the scene
        can be built. Everything downstream waits on it, and any failure
        drops to the flat mark rather than leaving an empty canvas. */
-    window.CMPRSSR3D.create(canvas, { count: 15000 })
+    window.CMPRSSR3D.create(canvas, { count: pointCount() })
       .then(function (scene) {
         if (!scene || !scene.ok) return fail();
         start(scene, host, readout);

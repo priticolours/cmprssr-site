@@ -66,7 +66,7 @@ const PAGE = `<!doctype html>
 <script>
   /* create() is async: the fp mesh is fetched before the scene exists. */
   window.__scene = null;
-  window.CMPRSSR3D.create(document.getElementById('c'), { count: 15000 })
+  window.CMPRSSR3D.create(document.getElementById('c'), { count: 150000 })
     .then(function (s) { window.__scene = s; window.__ok = !!(s && s.ok); })
     .catch(function (e) { window.__err = String(e && e.message || e); window.__ok = false; });
 

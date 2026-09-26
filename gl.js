@@ -3,17 +3,29 @@
 
    Raw WebGL2, no libraries. One animation, 9 seconds, seamless loop:
 
-     0.0 – 1.2   LOGO        the two rectangles hold, camera still
-     1.2 – 2.8   ASSEMBLE    the fp converges from its exploded state
+     0.0 – 1.2   WORDMARK    the particles already spell "cmprssr"
+     1.2 – 2.8   ASSEMBLE    they disperse and the fp converges
      2.8 – 3.6   HOLD        assembled, drifting
      3.6 – 5.0   TEARDOWN    the real body separates along its optical axis
      4.2 – 5.0   DISSOLVE    the fp becomes a point cloud (overlaps)
-     5.2 – 6.2   CONDENSE    the cloud contracts into the logo
-     6.0 – 6.6   LOGO        the logo lands and holds to t=9
+     5.2 – 6.2   CONDENSE    the cloud contracts back into the wordmark
+     6.0 – 9.0   WORDMARK    held, letter by letter
+
+   There is no separate logo object. The wordmark IS the point cloud at
+   rest: the same 150k particles that spell "cmprssr" are the ones that
+   become the camera. That is why the loop closes cleanly — there is no
+   hand-off between two things, only one object that changes state.
+
+   Those 150k targets are sampled offline by tools/build-wordmark.mjs
+   from pango outlines of the text, and the page's own header masks the
+   same SVG file, so the endpoint is the wordmark you can read at the top
+   of the page and not an approximation of it. (It replaced a two-box
+   stand-in that read as two unrelated rectangles.)
 
    Nothing cuts. Every transition is a quintic over an overlapping
    window, and the camera drift is a single slow cosine, so t=0 and
    t=CYCLE share both value and slope and the seam is invisible.
+   tools/smoothness.js asserts exactly that, numerically.
 
    The camera is the real Sigma fp, from the scan in
    DUMP/fp model, sliced into five stages along its own optical axis
@@ -21,12 +33,8 @@
 
    Why no library: the whole thing is one vertex shader that lerps a
    point between three positions — on the mesh, scattered in the cloud,
-   and on the logo. Three.js would be 600KB to do arithmetic I can do
+   and on the wordmark. Three.js would be 600KB to do arithmetic I can do
    in 40 lines, and the page has no external requests by design.
-
-   Every point knows all three of its homes, so the morph is exact:
-   the cloud at t=5.2s lands precisely on the logo surface and the
-   handoff to solid geometry is invisible.
    ═══════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -42,7 +50,10 @@
     steel: [0.62, 0.70, 0.76],
     body:  [0.44, 0.52, 0.59],
     bodyLo:[0.32, 0.39, 0.46],
-    signal:[0.96, 0.42, 0.18]
+    signal:[0.96, 0.42, 0.18],
+    /* the header's --fg. The cloud's final pass takes this so the
+       particles and the page's own text are the same ink. */
+    ink:   [0.933, 0.949, 0.961]
   };
 
   /* ── tiny mat4 ───────────────────────────────────────────────── */
@@ -179,26 +190,38 @@
   /* The logo: two rectangles. Left is glass, right is the sensor.
      These are the endpoint the whole animation contracts into, and the
      same two rectangles are the app's icon form. */
-  function logoMesh() {
-    var a = box(0.30, 1.44, 0.16);
-    var b = box(0.46, 1.44, 0.16);
-    var p = [], n = [], idx = [];
-    function push(m, dx, col) {
-      var base = p.length/3;
-      for (var i = 0; i < m.pos.length; i += 3) {
-        p.push(m.pos[i]+dx, m.pos[i+1], m.pos[i+2]);
-        n.push(m.nrm[i], m.nrm[i+1], m.nrm[i+2]);
-      }
-      for (var k = 0; k < m.idx.length; k++) idx.push(m.idx[k] + base);
-    }
-    push(a, -0.46, 0);
-    push(b,  0.40, 1);
-    return {
-      mesh: { pos:p, nrm:n, idx:idx },
-      /* part id 0 = left rect, 1 = right rect, for point targets */
-      groups: [{ base:0, count:a.pos.length/3, color:C.lens },
-               { base:a.pos.length/3, count:b.pos.length/3, color:C.signal }]
-    };
+  /* ── the wordmark the cloud contracts into ────────────────────
+     Sampled offline from the same pango outlines the page's header
+     renders, so the particles land on the letterforms that are
+     actually on screen rather than on an approximation of them.
+
+     This replaced a two-box "logo" that was a stand-in and read as
+     two unrelated rectangles — the one thing the motion must not
+     end on. The blob is xyz float32, y-up, centred, z=0. */
+  function loadWordmark(url) {
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("wordmark " + r.status);
+        return r.json();
+      })
+      .then(function (meta) {
+        return fetch(url.replace(/\.json$/, ".bin"))
+          .then(function (r) {
+            if (!r.ok) throw new Error("wordmark bin " + r.status);
+            return r.arrayBuffer();
+          })
+          .then(function (buf) {
+            /* Validate before trusting it: a short read would otherwise
+               become a Float32Array of NaN and the cloud would vanish
+               with no error anywhere. */
+            var want = meta.count * 3 * 4;
+            if (buf.byteLength !== want) {
+              throw new Error("wordmark bin is " + buf.byteLength +
+                              "B, expected " + want + "B");
+            }
+            return { meta: meta, pts: new Float32Array(buf) };
+          });
+      });
   }
 
   /* ── the camera, as five parts along the optical axis ─────────── */
@@ -400,25 +423,18 @@
   /* ── shaders ─────────────────────────────────────────────────
      The position chunk is shared by the solid and point programs so
      both agree exactly on where everything is at any t. */
-  var POS_CHUNK = [
-    "vec3 place(vec3 aPos, vec3 aDir, float aDist, vec3 aScatter, vec3 aLogo,",
-    "            float uExplode, float uCloud, float uCollapse) {",
-    "  vec3 pEx = aPos + aDir * aDist * uExplode;",
-    "  vec3 pSc = mix(pEx, pEx + aScatter, uCloud);",
-    "  return mix(pSc, aLogo, uCollapse);",
-    "}"
-  ].join("\n");
-
   var VS_SOLID = [
     "#version 300 es",
     "in vec3 aPos; in vec3 aNrm; in vec3 aCol;",
-    "in vec3 aDir; in float aDist; in vec3 aLogo;",
+    "in float aDir; in float aDist;",
     "uniform mat4 uProj, uView, uModel, uNormalMat;",
-    "uniform float uExplode, uCloud, uCollapse, uAlpha;",
+    "uniform float uExplode, uAlpha;",
     "out vec3 vNrm; out vec3 vCol; out float vAlpha; out vec3 vView;",
-    POS_CHUNK,
     "void main() {",
-    "  vec3 p = place(aPos, aDir, aDist, vec3(0.0), aLogo, uExplode, uCloud, uCollapse);",
+    /* The camera is a solid and stays a solid: only the point cloud
+       collapses. Keeping aDist here (and nothing else) is what makes
+       the teardown a real disassembly rather than a scale-down. */
+    "  vec3 p = aPos + aDir * aDist * uExplode;",
     "  vec4 world = uModel * vec4(p, 1.0);",
     "  vView = world.xyz;",
     "  vNrm = normalize(mat3(uModel) * aNrm);",
@@ -426,6 +442,7 @@
     "  gl_Position = uProj * uView * world;",
     "}"
   ].join("\n");
+
 
   /* Three-point rig rather than one light. A single directional with a
      low ambient leaves every face perpendicular to it black, which is
@@ -468,34 +485,72 @@
   var VS_POINT = [
     "#version 300 es",
     "in vec3 aPos; in vec3 aCol;",
-    "in vec3 aDir; in float aDist; in vec3 aScatter; in vec3 aLogo;",
+    "in float aDir; in float aDist; in vec3 aScatter; in vec3 aLogo;",
+    "in float aDelay;",
     "uniform mat4 uProj, uView, uModel;",
-    "uniform float uExplode, uCloud, uCollapse, uAlpha, uSize, uPixel;",
-    "out vec3 vCol; out float vAlpha;",
-    POS_CHUNK,
+    "uniform float uExplode, uCloud, uDelay;",
+    "uniform float uAlpha, uAlphaCloud, uAlphaWord;",
+    "uniform float uSizeCloud, uSizeWord, uPixel;",
+    /* The wordmark is authored flat facing the camera, so it needs a depth.
+       The fp's centre sits at view z = -dist, so -dist puts the letters at
+       the same distance as the camera they came from — the dissolve is then
+       a pure lateral movement, with no scale jump at the crossover. */
+    "uniform float uLogoZ, uLogoScale;",
+    "uniform vec3 uLogoCol;",
+    "out vec3 vCol; out float vAlpha; out float vD;",
     "void main() {",
-    "  vec3 p = place(aPos, aDir, aDist, aScatter, aLogo, uExplode, uCloud, uCollapse);",
-    "  vec4 world = uModel * vec4(p, 1.0);",
-    "  vec4 vp = uView * world;",
+    "  vec3 pEx = aPos + aDir * aDist * uExplode;",
+    "  vec3 pSc = mix(pEx, pEx + aScatter, uCloud);",
+    /* Mix in VIEW space, after the model and view transforms. Pushing the
+       wordmark through a model inverse was the obvious route — but a
+       hand-rolled 4x4 inverse is a bug waiting to happen, and mine was
+       wrong by exactly 1.0, which threw every letterform outside the
+       frustum. Transforming forward cannot get the two spaces out of step. */
+    "  vec3 viewPos = (uView * uModel * vec4(pSc, 1.0)).xyz;",
+    /* Per-point stagger, so the wordmark assembles left to right the way
+       an eye reads it. The 0.35 spread is scaled back out by the divide, so
+       every point still reaches exactly 1.0 when uDelay does and the loop's
+       wrap stays seamless. */
+    "  float d = clamp((uDelay - aDelay * 0.35) / 0.65, 0.0, 1.0);",
+    "  vec3 p = mix(viewPos, aLogo * uLogoScale + vec3(0.0, 0.0, uLogoZ), d);",
+    "  vec4 vp = vec4(p, 1.0);",
     "  gl_Position = uProj * vp;",
-    "  gl_PointSize = clamp(uSize * uPixel / max(-vp.z, 0.05), 1.0, 64.0);",
-    "  vCol = aCol;",
-    "  vAlpha = uAlpha;",
+    /* Point size tracks d, the same 0..1 that drives the position mix.
+       A single size cannot serve both states: at the wordmark the 150k
+       points pack onto an inked area of ~6% of the frame, so they must
+       be ~1px or they fuse into a solid slab and the letterforms
+       vanish. The same 1px points spread over a volume leave the cloud
+       so sparse it disappears. So the points shrink as they converge,
+       which also reads as condensing. */
+    "  gl_PointSize = clamp(mix(uSizeCloud, uSizeWord, d)",
+    "                    * uPixel / max(-vp.z, 0.05), 1.0, 64.0);",
+    /* Cloud keeps the camera's stage colours; the wordmark takes the
+       header's ink, so the two are visibly the same object. */
+    "  vCol = mix(aCol, uLogoCol, d);",
+    "  vAlpha = uAlpha; vD = d;",
     "}"
   ].join("\n");
 
   var FS_POINT = [
     "#version 300 es",
     "precision highp float;",
-    "in vec3 vCol; in float vAlpha;",
-    "uniform float uAlpha;",
+    "in vec3 vCol; in float vAlpha; in float vD;",
+    "uniform float uAlpha, uAlphaCloud, uAlphaWord;",
     "out vec4 o;",
     "void main() {",
     "  vec2 d = gl_PointCoord - 0.5;",
     "  float r = dot(d, d);",
     "  if (r > 0.25) discard;",
-    "  float a = smoothstep(0.25, 0.02, r);",
-    "  o = vec4(vCol, a * uAlpha);",
+    /* Soft shoulder, squared for a flat core. A hard disc shows faceting
+       where neighbours overlap; a gaussian washes the letterforms out. */
+    "  float a = 1.0 - smoothstep(0.04, 0.25, r);",
+    "  a *= a;",
+    /* Alpha has to differ between the two states by ~14x, because the
+       cloud spreads 150k points over a volume while the wordmark packs the
+       same 150k onto an inked area of only ~6% of the frame. One shared
+       value is either a dim cloud or a white slab. vD is the same 0..1
+       that drives the position mix, so brightness follows the geometry. */
+    "  o = vec4(vCol, a * vAlpha * mix(uAlphaCloud, uAlphaWord, vD));",
     "}"
   ].join("\n");
 
@@ -530,7 +585,24 @@
   function Scene(canvas, opts) {
     opts = opts || {};
     this.canvas = canvas;
-    this.count = opts.count || 14000;
+    /* 150k is what the wordmark blob holds, so that is the ceiling —
+       anything higher would only duplicate letters, and because the
+       blend is additive, duplication is also brightness. */
+    this.count = opts.count || 150000;
+    /* Point size and alpha are opts so tools/tune-points.js can sweep
+       them against measured framebuffer statistics, rather than someone
+       guessing a number and reading it back off a screenshot. The
+       defaults are what that sweep picked. */
+    /* Point size and alpha are opts so tools/tune-points.js can sweep
+       them against measured framebuffer statistics rather than someone
+       guessing a number and reading it back off a screenshot. The
+       defaults are the arithmetic, not a guess: see draw() for why
+       cloud and wordmark each need their own. */
+    this.sizeCloud  = opts.sizeCloud  !== undefined ? opts.sizeCloud  : 0.0040;
+    this.sizeWord   = opts.sizeWord   !== undefined ? opts.sizeWord   : 0.0016;
+    this.alphaCloud = opts.alphaCloud !== undefined ? opts.alphaCloud : 0.090;
+    this.alphaWord  = opts.alphaWord  !== undefined ? opts.alphaWord  : 0.260;
+    this.logoScale  = opts.logoScale  !== undefined ? opts.logoScale  : 1.15;
     this.clear = opts.clear || [0, 0, 0, 0];
     this.ok = false;
 
@@ -553,10 +625,17 @@
       return;
     }
 
-    this.uSolid = locs(gl, this.pSolid, ["uProj","uView","uModel","uNormalMat",
-      "uExplode","uCloud","uCollapse","uAlpha"]);
+    this.uSolid = locs(gl, this.pSolid, ["uProj","uView","uModel",
+      "uNormalMat","uExplode","uAlpha"]);
+    /* Every name here must exist in the shader. A missing one returns a
+       null location, and gl.uniform1f(null, x) is a SILENT no-op in WebGL
+       — no error, no console line, just an invisible cloud. So this list
+       is asserted against the sources by tools/check-uniforms.js. */
     this.uPoint = locs(gl, this.pPoint, ["uProj","uView","uModel",
-      "uExplode","uCloud","uCollapse","uAlpha","uSize","uPixel"]);
+      "uExplode","uCloud","uDelay",
+      "uAlpha","uAlphaCloud","uAlphaWord",
+      "uSizeCloud","uSizeWord","uPixel",
+      "uLogoZ","uLogoScale","uLogoCol"]);
 
     var rnd = rng(0x5eed1a);
     this.rnd = rnd;
@@ -568,10 +647,11 @@
        real teardown of the real body. */
     var st = fpStages(fp);
     var parts = fpParts(fp, st);
-    var logo = logoMesh();
+    var wm = opts.wm;
+    if (!wm) return;                 /* no target, no cloud */
 
-    this._buildSolid(parts, logo);
-    this._buildPoints(parts, logo, rnd);
+    this._buildSolid(parts);
+    this._buildPoints(parts, wm, rnd);
 
     this.mProj = m4(); this.mView = m4(); this.mModel = m4();
     this.tmpA = m4(); this.tmpB = m4();
@@ -584,68 +664,39 @@
 
   /* Solid geometry: camera parts + logo, each vertex carrying where it
      belongs in the explode and on the logo. */
-  Scene.prototype._buildSolid = function (parts, logo) {
+  Scene.prototype._buildSolid = function (parts) {
     var gl = this.gl, V = 0, I = 0, k;
     for (k = 0; k < parts.length; k++) {
       V += parts[k].mesh.pos.length/3; I += parts[k].mesh.idx.length;
     }
-    V += logo.mesh.pos.length/3; I += logo.mesh.idx.length;
 
     var pos = new Float32Array(V*3), nrm = new Float32Array(V*3),
         col = new Float32Array(V*3), dir = new Float32Array(V),
-        dst = new Float32Array(V), lgo = new Float32Array(V*3),
-        idx = new Uint32Array(I);
+        dst = new Float32Array(V), idx = new Uint32Array(I);
 
     var vo = 0, io = 0, i;
-    function emit(mesh, px, d, dist, color, logoPts, logoBase) {
-      var n = mesh.pos.length/3, base = vo;
+    for (k = 0; k < parts.length; k++) {
+      var mesh = parts[k].mesh, n = mesh.pos.length/3, base = vo;
       for (i = 0; i < n; i++) {
-        pos[(base+i)*3]   = mesh.pos[i*3]   + px;
+        pos[(base+i)*3]   = mesh.pos[i*3]   + parts[k].x;
         pos[(base+i)*3+1] = mesh.pos[i*3+1];
         pos[(base+i)*3+2] = mesh.pos[i*3+2];
         nrm[(base+i)*3]   = mesh.nrm[i*3];
         nrm[(base+i)*3+1] = mesh.nrm[i*3+1];
         nrm[(base+i)*3+2] = mesh.nrm[i*3+2];
-        col[(base+i)*3]   = color[0];
-        col[(base+i)*3+1] = color[1];
-        col[(base+i)*3+2] = color[2];
-        dir[base+i] = d;
-        dst[base+i] = dist;
-        /* default logo target = own position, so a part that never
-           collapses simply sits where it is */
-        lgo[(base+i)*3]   = mesh.pos[i*3]   + px;
-        lgo[(base+i)*3+1] = mesh.pos[i*3+1];
-        lgo[(base+i)*3+2] = mesh.pos[i*3+2];
+        col[(base+i)*3]   = parts[k].color[0];
+        col[(base+i)*3+1] = parts[k].color[1];
+        col[(base+i)*3+2] = parts[k].color[2];
+        dir[base+i] = parts[k].dir;
+        dst[base+i] = parts[k].dist;
       }
       for (i = 0; i < mesh.idx.length; i++) idx[io++] = mesh.idx[i] + base;
       vo += n;
     }
 
-    for (k = 0; k < parts.length; k++) {
-      emit(parts[k].mesh, parts[k].x, parts[k].dir, parts[k].dist, parts[k].color);
-    }
-    var camEnd = vo;
-    emit(logo.mesh, 0, 0, 0, C.lens);
-
-    /* Paint the logo's two rectangles their real colours, and give
-       every camera vertex a target on the logo so the collapse is
-       a real redistribution rather than everyone piling on one point. */
-    for (k = 0; k < logo.groups.length; k++) {
-      var g = logo.groups[k], c = g.color;
-      for (i = 0; i < g.count; i++) {
-        var v = camEnd + g.base + i;
-        col[v*3] = c[0]; col[v*3+1] = c[1]; col[v*3+2] = c[2];
-      }
-    }
-    var logoPts = sampleSurface(logo.mesh, camEnd, this.rnd);
-    for (i = 0; i < camEnd; i++) {
-      lgo[i*3]   = logoPts[i*3];
-      lgo[i*3+1] = logoPts[i*3+1];
-      lgo[i*3+2] = logoPts[i*3+2];
-    }
-
     var vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
+    var self = this;
     function buf(name, data, size) {
       var loc = gl.getAttribLocation(this.pSolid, name);
       if (loc < 0) return;
@@ -655,23 +706,16 @@
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
     }
-    var self = this;
     [["aPos",pos,3], ["aNrm",nrm,3], ["aCol",col,3],
-     ["aDir",new Float32Array(dir),1], ["aDist",new Float32Array(dst),1],
-     ["aLogo",lgo,3]].forEach(function (a) { buf.call(self, a[0], a[1], a[2]); });
+     ["aDir",new Float32Array(dir),1], ["aDist",new Float32Array(dst),1]
+    ].forEach(function (a) { buf.call(self, a[0], a[1], a[2]); });
 
     var ib = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
 
-    this.solid = { vao:vao, count:idx.length, camCount:0, total:I };
-    this.solid.camIndices = 0;
-    /* draw ranges: camera first, then logo */
-    var camI = 0;
-    for (k = 0; k < parts.length; k++) camI += parts[k].mesh.idx.length;
-    this.solid.camCount = camI;
-    this.solid.logoStart = camI;
+    this.solid = { vao:vao, count:idx.length };
   };
 
   /* The cloud: one point per sample, each knowing its mesh home, a
@@ -679,14 +723,16 @@
   /* Point count is a function of surface area, not a fixed number: the
      fp is 1.0 long where the old primitives were 2.3, so the same count
      is roughly 5x denser per unit area. */
-  Scene.prototype._buildPoints = function (parts, logo, rnd) {
+  Scene.prototype._buildPoints = function (parts, wm, rnd) {
     var gl = this.gl;
     var total = this.count;
+    if (total > wm.pts.length/3) total = wm.pts.length/3;
+    var wn = wm.pts.length/3;
+
     var pos = new Float32Array(total*3), col = new Float32Array(total*3),
         dir = new Float32Array(total), dst = new Float32Array(total),
-        sca = new Float32Array(total*3), lgo = new Float32Array(total*3);
-
-    var logoPts = sampleSurface(logo.mesh, total, rnd);
+        sca = new Float32Array(total*3), lgo = new Float32Array(total*3),
+        dly = new Float32Array(total);
 
     /* Distribute samples across parts by area so the cloud keeps the
        camera's proportions instead of over-weighting the small bits. */
@@ -702,7 +748,7 @@
       weights.push(a); sum += a;
     }
 
-    var o = 0;
+    var o = 0, nth = 0;
     for (k = 0; k < parts.length; k++) {
       var n = k === parts.length-1 ? total - o : Math.round(total * weights[k]/sum);
       var s = sampleSurface(parts[k].mesh, n, rnd);
@@ -716,8 +762,8 @@
         col[v*3+2] = parts[k].color[2];
         dir[v] = parts[k].dir;
         dst[v] = parts[k].dist;
-        /* Scatter is deliberately TIGHT. A wide scatter turns 14k
-           points into generic starfield and the camera's silhouette is
+        /* Scatter is deliberately TIGHT. A wide scatter turns a dense
+           cloud into generic starfield and the camera's silhouette is
            lost — the cloud has to still read as *this* camera, so the
            points stay close to where they were sampled and gain only
            enough jitter to look granular. */
@@ -727,15 +773,27 @@
         sca[v*3]   = Math.sin(ph)*Math.cos(th)*rr;
         sca[v*3+1] = Math.cos(ph)*rr*0.72;
         sca[v*3+2] = Math.sin(ph)*Math.sin(th)*rr;
-        lgo[v*3]   = logoPts[v*3];
-        lgo[v*3+1] = logoPts[v*3+1];
-        lgo[v*3+2] = logoPts[v*3+2];
+
+        /* Wordmark target. The blob is already in rejection-sampling
+           order, which is random, so walking it sequentially gives a
+           random-but-even subset for free — and a fixed mapping means
+           the page and the exported video show the same frame. A hash
+           here would only add a way for two particles to collide into
+           a visible clump. */
+        var j = v % wn;
+        lgo[v*3]   = wm.pts[j*3];
+        lgo[v*3+1] = wm.pts[j*3+1];
+        lgo[v*3+2] = wm.pts[j*3+2];
+        /* Delay correlates with x, so the wordmark resolves left to
+           right the way an eye reads it. */
+        dly[v] = (lgo[v*3] / (wm.meta.width/2) + 1) * 0.5;
       }
       o += n;
     }
 
     var vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
+    var self = this;
     function buf(name, data, size) {
       var loc = gl.getAttribLocation(this.pPoint, name);
       if (loc < 0) return;
@@ -745,12 +803,16 @@
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
     }
-    var self = this;
-    ["aPos","aCol","aDir","aDist","aScatter","aLogo"].forEach(function (nm) {
-      var map = { aPos:pos, aCol:col, aDir:dir, aDist:dst, aScatter:sca, aLogo:lgo };
-      var size = nm === "aDir" || nm === "aDist" ? 1 : 3;
-      buf.call(self, nm, new Float32Array(map[nm]), size);
-    });
+    /* Size 3 for the vec3s, 1 for aDelay. Getting this wrong is silent
+       and total: vertexAttribPointer with size 3 against a `total`-float
+       buffer reads past the end, the draw raises INVALID_OPERATION and
+       draws nothing at all, and every frame where the cloud is on screen
+       comes back black. Cost an afternoon. */
+    var map = { aPos:pos, aCol:col, aScatter:sca, aLogo:lgo };
+    Object.keys(map).forEach(function (nm) { buf.call(self, nm, map[nm], 3); });
+    buf.call(self, "aDir", dir, 1);
+    buf.call(self, "aDist", dst, 1);
+    buf.call(self, "aDelay", dly, 1);
     gl.bindVertexArray(null);
     this.points = { vao:vao, count:total };
   };
@@ -781,46 +843,42 @@
   function timeline(t) {
     t = ((t % CYCLE) + CYCLE) % CYCLE;
     var S = { explode:0, cloud:0, collapse:0,
-              camAlpha:0, logoAlpha:0, pointAlpha:0,
-              spin:0, tilt:0, zoom:1 };
+              camAlpha:0, pointAlpha:0, spin:0, tilt:0, zoom:1 };
 
     function band(a, b) { return quintic((t - a) / (b - a)); }
     function win(a, b, c, d) { return Math.min(band(a, b), 1 - band(c, d)); }
 
     /* — who is on screen ————————————————————————————————
-       Three overlapping windows. The camera owns the middle of the
-       loop, the cloud bridges camera to logo, and the logo holds the
-       beginning and the end — which is what closes the seam. */
+       Two windows now, not three. The logo is not a separate object
+       any more: the points ARE the wordmark, so the opening and
+       closing beats are the cloud already settled rather than a
+       hand-off to a second thing. That is what closes the seam. */
     var body = win(0.95, 1.75, 4.30, 5.05);      /* the fp        */
-    /* the cloud holds a little longer so the logo has something to
-       land on: at 6.10s the two were down to 0.005 total and the
-       hand-off read as a blink */
     var puff = win(4.15, 4.85, 5.85, 6.45);      /* the cloud     */
-    /* The mark leads in, then gets out of the way while the fp is the
-       subject, then returns. Holding it at full strength throughout made
-       the logo beat indistinguishable from the camera beat, which is why
-       the loop read as one long state instead of four. */
-    /* Two windows, not one ramp: the mark is genuinely on, off, then on
-       again, so its value is 1 at both ends of the loop and 0 in the
-       middle. The leading window starts at exactly 0 and the trailing
-       one never falls, so t=0 and t=CYCLE agree. */
-    /* The mark starts leaving at 0.80 and the fp starts arriving at
-       0.95, so they overlap by ~0.4s and there is no empty frame at
-       the hand-off. */
-    var mark = Math.max(win(-0.30, -0.10, 0.80, 1.30), band(5.85, 6.40));
 
-    S.camAlpha   = body;
-    S.cloud      = puff;
-    S.pointAlpha = puff;
-    S.logoAlpha  = mark;
+    /* The wordmark holds through the head of the loop, then the points
+       disperse into the camera as it assembles, then they return. The
+       leading window starts before t=0 and the trailing one never
+       falls, so collapse is 1 at both ends of the cycle. */
+    S.collapse  = Math.max(win(-0.30, -0.10, 0.95, 1.75), band(5.10, 6.20));
+    /* Points are invisible only while the solid fp is the subject —
+       they sit exactly on its surface there, so drawing them would just
+       halo the body. The closing window has to come back BEFORE the
+       cloud's own fall completes, or the last 2.5s of the loop is empty
+       and the wrap cuts from nothing straight to the wordmark. Because
+       win(4.15,4.85,5.85,6.45) and band(5.85,6.45) are the same ramp,
+       adding them cancels exactly across the overlap: the sum is 1 from
+       6.45s onward with no kink, which is just band(4.15, 4.85). */
+    S.pointAlpha = Math.max(win(-0.30, -0.10, 1.10, 1.95), band(4.15, 4.85));
+
+    S.camAlpha = body;
+    S.cloud    = puff;
 
     /* — geometry ——————————————————————————————————————
-       Both are multiplied by their window, so a value only ever
-       matters while the thing it belongs to is actually drawn. */
+       Multiplied by their window, so a value only matters while the
+       thing it belongs to is actually drawn. */
     /* the fp converges from its exploded state, then opens again */
     S.explode  = Math.max(1 - band(1.10, 2.85), band(3.55, 5.30)) * body;
-    /* the cloud contracts into the logo */
-    S.collapse = band(5.10, 6.20) * puff;
 
     /* — the camera move ————————————————————————————————
        One slow drift across the whole loop, built from cosines so
@@ -833,9 +891,9 @@
     S.zoom = 1 + 0.028 * drift;
 
     /* The spin is the one parameter that cannot simply be a function of
-       t, because the opening and closing beats show the LOGO with no
-       camera in it — and a value chosen there is unconstrained at the
-       wrap. So it is a pure cosine (value and slope both match at
+       t, because the opening and closing beats show the wordmark with
+       no camera in it — and a value chosen there is unconstrained at
+       the wrap. So it is a pure cosine (value and slope both match at
        t=0 and t=CYCLE) plus one term multiplied by the camera window,
        which is identically zero at both ends of the loop. */
     S.spin = 0.15 + 0.11 * drift + 0.10 * body;
@@ -893,36 +951,11 @@
       gl.uniformMatrix4fv(su.uModel, false, this.mModel);
       gl.uniformMatrix4fv(su.uNormalMat, false, this.mModel);
       gl.uniform1f(su.uExplode, S.explode);
-      gl.uniform1f(su.uCloud, 0);
-      gl.uniform1f(su.uCollapse, 0);
       gl.uniform1f(su.uAlpha, S.camAlpha);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(true);
-      gl.drawElements(gl.TRIANGLES, this.solid.camCount, gl.UNSIGNED_INT, 0);
-    }
-
-    /* logo */
-    if (S.logoAlpha > 0.001) {
-      if (S.camAlpha <= 0.001) {
-        gl.useProgram(this.pSolid);
-        gl.bindVertexArray(this.solid.vao);
-        gl.uniformMatrix4fv(su.uProj, false, this.mProj);
-        gl.uniformMatrix4fv(su.uView, false, this.mView);
-        gl.uniformMatrix4fv(su.uModel, false, this.mModel);
-        gl.uniformMatrix4fv(su.uNormalMat, false, this.mModel);
-        gl.uniform1f(su.uExplode, 0);
-        gl.uniform1f(su.uCloud, 0);
-        gl.uniform1f(su.uCollapse, 0);
-        gl.uniform1f(su.uAlpha, 1);
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.depthMask(true);
-      }
-      gl.uniform1f(su.uAlpha, S.logoAlpha);
-      gl.drawElements(gl.TRIANGLES,
-        this.solid.count - this.solid.logoStart, gl.UNSIGNED_INT,
-        this.solid.logoStart * 4);
+      gl.drawElements(gl.TRIANGLES, this.solid.count, gl.UNSIGNED_INT, 0);
     }
 
     /* point cloud */
@@ -934,19 +967,43 @@
       gl.uniformMatrix4fv(pu.uModel, false, this.mModel);
       gl.uniform1f(pu.uExplode, S.explode);
       gl.uniform1f(pu.uCloud, S.cloud);
-      gl.uniform1f(pu.uCollapse, S.collapse);
-      /* Alpha is per-point and the points are additive, so density
-         and brightness are the same problem. 26k points on a 1.0-long
-         fp are ~6x denser per unit area than 14k were on the old
-         2.3-unit primitives, which clips to a white disc. */
-      gl.uniform1f(pu.uAlpha, S.pointAlpha * 0.26);
-      /* uSize is a world-space diameter, uPixel is pixels per world unit
-         at unit depth, so the shader's single divide yields a real pixel
-         size that shrinks with distance. 0.02 world units at the cloud's
-         ~4.3 unit distance renders as a ~2.5px point. The upper clamp
-         in the shader is what stops a near-camera particle from becoming
-         a full-screen disc. */
-      gl.uniform1f(pu.uSize, 0.026);
+      /* S.collapse is the delay: it reaches 1 exactly when every point
+         has arrived, which is what keeps the wrap seamless. */
+      gl.uniform1f(pu.uDelay, S.collapse);
+      /* The wordmark is authored flat in view space, so it needs a depth.
+         The fp's centre sits at view z = -dist (the eye is on +z looking at
+         the origin), so -dist puts the letters at the same distance as the
+         camera they came from — the dissolve between the two is then a
+         pure lateral movement, with no scale jump at the crossover. */
+      gl.uniform1f(pu.uLogoZ, -dist);
+      gl.uniform3f(pu.uLogoCol, C.ink[0], C.ink[1], C.ink[2]);
+      /* Per-point alpha. The blend is additive, so brightness and density
+         are the same problem: a point's contribution accumulates with
+         every neighbour that overlaps it, and once enough overlap lands
+         in one pixel it clips to white and the letterforms disappear
+         into a disc. So alpha has to fall as 1/N with the count, and
+         uSize has to shrink with it — bigger points overlap more, which
+         is the other half of the same blowout. Both are swept against
+         measured framebuffer stats by tools/tune-points.js, not chosen
+         by eye: the earlier 0.019/0.26 pair was 5x too big and put 4% of
+         the frame at 255. */
+      gl.uniform1f(pu.uAlpha, S.pointAlpha);
+      /* Two alphas, because the two states are ~14x different in density:
+         the cloud spreads the points over a volume, the wordmark packs
+         the same count onto an inked area of ~6% of the frame. One
+         shared value is either a dim cloud or a white slab. */
+      gl.uniform1f(pu.uAlphaCloud, this.alphaCloud);
+      gl.uniform1f(pu.uAlphaWord, this.alphaWord);
+      /* Two sizes for the same reason, in reverse: the wordmark needs
+         ~1px points or 150k of them fuse into a solid slab, while the
+         same 1px points leave the spread cloud too sparse to see. The
+         shader lerps between them by d. */
+      gl.uniform1f(pu.uSizeCloud, this.sizeCloud);
+      gl.uniform1f(pu.uSizeWord, this.sizeWord);
+      /* The wordmark is authored 1.3 units wide in a ~1.76-unit frame.
+         Scaled up so the points have more letterform to spread across —
+         density per pixel is the whole ball game here. */
+      gl.uniform1f(pu.uLogoScale, this.logoScale);
       gl.uniform1f(pu.uPixel, h / (2 * Math.tan(0.62 / 2)));
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
@@ -975,8 +1032,12 @@
   function create(canvas, opts) {
     opts = opts || {};
     var url = opts.fpUrl || (BASE + "assets/models/sigma-fp.json");
-    return loadFP(url).then(function (fp) {
-      return new Scene(canvas, Object.assign({}, opts, { fp: fp }));
+    var wmU = opts.wmUrl || (BASE + "assets/wordmark-target.json");
+    /* Both assets are needed before anything can be built: the fp is the
+       cloud's origin, the wordmark is its destination. */
+    return Promise.all([loadFP(url), loadWordmark(wmU)]).then(function (r) {
+      return new Scene(canvas, Object.assign({}, opts,
+        { fp: r[0], wm: r[1] }));
     });
   }
 
